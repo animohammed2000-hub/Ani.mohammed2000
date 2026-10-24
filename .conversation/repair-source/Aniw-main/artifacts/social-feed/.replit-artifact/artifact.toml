@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Social Feed"
+description = "A community social feed where people create accounts, set up profiles, share short posts, and see what everyone is talking about."
+version = "1.0.0"
+id = "artifacts/social-feed"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23837
+
+[services.development]
+run = "pnpm --filter @workspace/social-feed run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/social-feed", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/social-feed/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23837"
+BASE_PATH = "/"

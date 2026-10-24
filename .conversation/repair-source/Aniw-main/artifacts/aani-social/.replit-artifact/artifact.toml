@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Aani Social + Founder Assistant"
+description = "نسخة عمل من تطبيق Aani الاجتماعي تتضمن مساعد المؤسس للمحادثة عبر Supabase Edge Functions وGemini، مع إبقاء أدوات الإدارة وتعديل الشيفرة غير مفعّلة حتى تُربط بهوية المؤسس وصلاحيات موثقة."
+version = "1.0.0"
+id = "artifacts/aani-social"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19949
+
+[services.development]
+run = "pnpm --filter @workspace/aani-social run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/aani-social", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/aani-social/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19949"
+BASE_PATH = "/"

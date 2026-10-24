@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Aani Social"
+description = "Aani is an Arabic-first social platform for sharing posts, stories, short videos, conversations, profiles, and notifications, with an optional protected AI assistant."
+version = "1.0.0"
+id = "artifacts/aani-social"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19949
+
+[services.development]
+run = "pnpm --filter @workspace/aani-social run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/aani-social", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/aani-social/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19949"
+BASE_PATH = "/"
