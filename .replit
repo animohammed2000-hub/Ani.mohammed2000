@@ -1,6 +1,8 @@
 modules = ["nodejs-24", "python-base-3.13"]
 
 [deployment]
+build = ["sh", "-c", "npx vite build artifacts/aani-social"]
+run = ["node", "dist/index.js"]
 router = "application"
 deploymentTarget = "autoscale"
 
@@ -26,3 +28,15 @@ VITE_SUPABASE_URL = "https://whvhxgfdumxzunzsjkll.supabase.co"
 
 [[ports]]
 localPort = 5173
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
+
+[[ports]]
+localPort = 19949
+externalPort = 80

@@ -1,12 +1,15 @@
-/* 1. استدعاء Tailwind 4 */
+/* 1. استدعاء الخطوط الخارجية (يجب أن يكون في البداية تماماً) */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Noto+Sans+Arabic:wght@400;500;600;700&family=Tajawal:wght@400;500;700&family=Cairo:wght@400;600;700&display=swap');
+
+/* 2. استدعاء Tailwind 4 */
 @import "tailwindcss";
 
-/* 2. توجيه Tailwind لمسح كافة ملفات المكونات واستخراج الكلاسات */
+/* 3. توجيه Tailwind لمسح كافة ملفات المكونات واستخراج الكلاسات */
 @source "./**/*.{js,ts,jsx,tsx,html}";
 @source "../**/*.{js,ts,jsx,tsx,html}";
 @source "../src/**/*.{js,ts,jsx,tsx,html}";
 
-/* 3. ربط المتغيرات بنظام Tailwind 4 لتوليد كلاسات bg-card و bg-background و border-border */
+/* 4. ربط المتغيرات بنظام Tailwind 4 لتوليد كلاسات bg-card و bg-background و border-border */
 @theme {
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
@@ -27,9 +30,6 @@
   --font-sans: var(--app-font-sans);
   --font-serif: var(--app-font-serif);
 }
-
-/* 4. استدعاء الخطوط الخارجية */
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Noto+Sans+Arabic:wght@400;500;600;700&family=Tajawal:wght@400;500;700&family=Cairo:wght@400;600;700&display=swap');
 
 /* 5. التعريفات والألوان المتغيرة */
 :root, .dark {
@@ -249,4 +249,22 @@ body {
 
 .reel-action-btn.saved {
   color: #f59e0b;
+}
+
+/* ===== Heart Pulse Animation ===== */
+@keyframes heartPulse {
+  0% { transform: scale(1); }
+  25% { transform: scale(1.35); }
+  45% { transform: scale(0.85); }
+  70% { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+
+.animate-heart-pulse {
+  animation: heartPulse 0.45s cubic-bezier(0.17, 0.89, 0.32, 1.49) both;
+}
+
+.like-active {
+  color: #f43f5e !important;
+  filter: drop-shadow(0 0 8px rgba(244, 63, 94, 0.45));
 }

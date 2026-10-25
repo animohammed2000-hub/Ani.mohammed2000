@@ -1,3 +1,4 @@
+
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
@@ -18,17 +19,46 @@ app.use(
         };
       },
       res(res) {
-        return {
-          statusCode: res.statusCode,
-        };
+        return { statusCode: res.statusCode };
       },
     },
   }),
 );
+
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+
+app.get("/api/health", (_req, res) => {
+  res.status(200).json({ success: true, status: "ok" });
+});
 
 app.use("/api", router);
+
+// معالجة JSON غير الصالح
+app.use(
+  (
+    err: any,
+    _req: express.Request,
+    res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    if (res.headersSent) return next(err);
+
+    if (err?.type === "entity.parse.failed") {
+      return res.status(400).json({
+        success: false,
+        error: "صيغة البيانات المرسلة غير صحيحة",
+      });
+    }
+
+    logger.error({ err }, "API error");
+
+    return res.status(500).json({
+      success: false,
+      error: "حدث خطأ داخلي في الخادم",
+    });
+  },
+);
 
 export default app;

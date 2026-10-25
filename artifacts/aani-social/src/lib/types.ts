@@ -1,7 +1,9 @@
+
 export type Profile = {
   id: string;
   username: string;
   full_name: string;
+  display_name?: string | null;
   avatar_url: string | null;
   bio: string;
 };
@@ -11,36 +13,58 @@ export type Post = {
   user_id: string;
   content: string;
   media_url: string | null;
-  media_urls?: string[];
-  type: 'text' | 'photo' | 'reel';
+  media_urls?: string[] | null;
+  type: "text" | "photo" | "reel";
   created_at: string;
   author: Profile | null;
 
-  // العدادات الحقيقية المربوطة بـ Supabase Triggers
-  likes_count: number;
-  comments_count: number;
-  reposts_count: number;
+  likes_count?: number;
+  comments_count?: number;
+  reposts_count?: number;
 
-  // حالات المستخدم الحالي لحفظ التفاعل بشكل دائم
   liked_by_me?: boolean;
   saved_by_me?: boolean;
   reposted_by_me?: boolean;
 
-  // حقول اختيارية سابقة
   likes?: { user_id: string }[];
-  comments?: any[];
+  comments?: PostComment[];
 };
 
-export const displayName = (profile?: Partial<Profile> | null) =>
-  profile?.full_name || (profile?.username ? `@${profile.username}` : 'عضو آني');
+export type PostComment = {
+  id: string;
+  post_id?: string;
+  user_id?: string;
+  userId?: string;
+  content?: string;
+  text?: string;
+  created_at?: string;
+  createdAt?: string;
+};
 
-export const normalizeProfile = (value: unknown): Profile | null => {
+export const displayName = (
+  profile?: Partial<Profile> | null,
+): string =>
+  profile?.display_name ||
+  profile?.full_name ||
+  (profile?.username ? `@${profile.username}` : "عضو آني");
+
+export const normalizeProfile = (
+  value: unknown,
+): Profile | null => {
   const row = Array.isArray(value) ? value[0] : value;
-  return row && typeof row === 'object' ? (row as Profile) : null;
+
+  if (!row || typeof row !== "object") return null;
+
+  return row as Profile;
 };
 
-export const formatDate = (value: string) =>
-  new Intl.DateTimeFormat('ar', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(value));
+export const formatDate = (value: string): string => {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "";
+
+  return new Intl.DateTimeFormat("ar-IQ", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+};
