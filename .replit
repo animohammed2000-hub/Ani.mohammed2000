@@ -26,5 +26,3 @@ VITE_SUPABASE_URL = "https://whvhxgfdumxzunzsjkll.supabase.co"
 
 [[ports]]
 localPort = 5173
-externalPort = 80
-exposeLocalhost = true

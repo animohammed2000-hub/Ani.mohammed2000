@@ -1,6 +1,37 @@
+/* 1. استدعاء Tailwind 4 */
 @import "tailwindcss";
+
+/* 2. توجيه Tailwind لمسح كافة ملفات المكونات واستخراج الكلاسات */
+@source "./**/*.{js,ts,jsx,tsx,html}";
+@source "../**/*.{js,ts,jsx,tsx,html}";
+@source "../src/**/*.{js,ts,jsx,tsx,html}";
+
+/* 3. ربط المتغيرات بنظام Tailwind 4 لتوليد كلاسات bg-card و bg-background و border-border */
+@theme {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--card));
+  --color-popover-foreground: hsl(var(--card-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --font-sans: var(--app-font-sans);
+  --font-serif: var(--app-font-serif);
+}
+
+/* 4. استدعاء الخطوط الخارجية */
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Noto+Sans+Arabic:wght@400;500;600;700&family=Tajawal:wght@400;500;700&family=Cairo:wght@400;600;700&display=swap');
 
+/* 5. التعريفات والألوان المتغيرة */
 :root, .dark {
   color-scheme: dark !important;
   --background: 220 12% 8% !important;

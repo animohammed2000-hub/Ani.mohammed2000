@@ -16,6 +16,7 @@
     "@tailwindcss/vite": "catalog:",
     "prettier": "^3.9.10",
     "tailwindcss": "catalog:",
-    "typescript": "~5.9.3"
+    "typescript": "~5.9.3",
+    "vite": "catalog:"
   }
 }
