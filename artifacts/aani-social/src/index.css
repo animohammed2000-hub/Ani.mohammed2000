@@ -1,36 +1,5 @@
+@import "tailwindcss";
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Noto+Sans+Arabic:wght@400;500;600;700&family=Tajawal:wght@400;500;700&family=Cairo:wght@400;600;700&display=swap');
-@import 'tailwindcss';
-@import 'tw-animate-css';
-@plugin "@tailwindcss/typography";
-
-@custom-variant dark (&:is(.dark *));
-
-@theme inline {
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
-  --color-border: hsl(var(--border));
-  --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
-  --color-card: hsl(var(--card));
-  --color-card-foreground: hsl(var(--card-foreground));
-  --color-primary: hsl(var(--primary));
-  --color-primary-foreground: hsl(var(--primary-foreground));
-  --color-secondary: hsl(var(--secondary));
-  --color-secondary-foreground: hsl(var(--secondary-foreground));
-  --color-muted: hsl(var(--muted));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-accent: hsl(var(--accent));
-  --color-accent-foreground: hsl(var(--accent-foreground));
-  --color-destructive: hsl(var(--destructive));
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
-  --font-sans: var(--app-font-sans);
-  --font-serif: var(--app-font-serif);
-  --font-mono: var(--app-font-mono);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-}
 
 :root, .dark {
   color-scheme: dark !important;
@@ -74,9 +43,9 @@ body {
   margin-bottom: 12px;
   border-radius: 16px;
   padding: 16px;
-  background: hsl(var(--card, 220 13% 9%));
-  color: hsl(var(--card-foreground, 0 0% 98%));
-  border: 1px solid hsl(var(--border, 220 13% 20%));
+  background: hsl(220 11% 12%);
+  color: hsl(38 16% 91%);
+  border: 1px solid hsl(220 8% 23%);
   box-sizing: border-box;
   direction: rtl;
   transition: border-color .2s ease, transform .2s ease;
@@ -131,7 +100,7 @@ body {
 }
 .dot.active { background: #fff; width: 18px; }
 
-/* ===== Reels: Full Screen (TikTok Style) ===== */
+/* ===== Reels: Full Screen ===== */
 .reels-container {
   height: 100dvh;
   overflow-y: auto;
@@ -150,7 +119,6 @@ body {
   background: #000;
 }
 
-/* Gradient overlay at bottom of reel */
 .reel-gradient-bottom {
   background: linear-gradient(to top,
     rgba(0,0,0,.85) 0%,
@@ -158,7 +126,6 @@ body {
     rgba(0,0,0,0) 100%);
 }
 
-/* Floating Glass Buttons */
 .glass-btn {
   background: rgba(255,255,255,.12);
   backdrop-filter: blur(14px) saturate(160%);
@@ -168,17 +135,12 @@ body {
 }
 .glass-btn:active { transform: scale(.92); }
 
-/* Fade Up Animation */
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 .fade-up { animation: fadeUp .35s ease both; }
-/* ============================================================
-   تحديثات أزرار التفاعل للأنماط الجديدة (X & Reels)
-   ============================================================ */
 
-/* شريط أزرار التفاعل في المنشور العادي متجمع يميناً */
 .post-actions-right {
   display: flex;
   align-items: center;
@@ -220,11 +182,10 @@ body {
   color: #f59e0b;
 }
 
-/* تعديل أزرار الريلز العائمة لتكون مرتفعة عن شريط التنقل السفلي */
 .reel-actions {
   position: absolute;
   right: 14px;
-  bottom: 110px; /* الارتفاع لعدم التداخل مع شريط الملاحة السفلي */
+  bottom: 110px;
   z-index: 30;
   display: flex;
   flex-direction: column;
