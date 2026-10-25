@@ -5,10 +5,9 @@ import { defineConfig } from 'vite';
 
 const rawPort = process.env.PORT || '5000';
 const port = Number(rawPort) || 5000;
-const basePath = process.env.BASE_PATH || './';
 
 export default defineConfig({
-  base: basePath,
+  base: '/',
   plugins: [
     react(),
     tailwindcss(),
