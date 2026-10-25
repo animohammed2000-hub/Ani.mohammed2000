@@ -3,8 +3,8 @@ import { Link, Route, Router as WouterRouter, Switch, useLocation } from 'wouter
 import { 
   ArrowUpLeft, Bell, Bookmark, ChevronDown, ChevronUp, Clock, Film, Filter, Heart, Home, 
   ImagePlus, MessageCircle, MessageSquare, MoreVertical, Plus, Repeat, Search, Send, 
-  Settings, Share2, Sparkles, Star, Trash2, UserRound, Video, X, Edit3, SendHorizontal,
-  Bot, Loader2, Code
+  Settings, Sparkles, Star, Trash2, UserRound, Video, X, SendHorizontal,
+  Bot, Loader2, Play, Flag, EyeOff
 } from 'lucide-react';
 
 import { Toaster } from '@/components/ui/toaster';
@@ -14,7 +14,7 @@ import { displayName, formatDate, normalizeProfile, type Post, type Profile } fr
 import NotFound from '@/pages/not-found';
 import '@/index.css';
 
-// --- مكون المساعد الذكي الآمن المربوط بـ Supabase Edge Function ---
+// --- المساعد الذكي الآمن ---
 function AIAssistantModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; error?: boolean }>>([]);
   const [input, setInput] = useState('');
@@ -52,16 +52,9 @@ function AIAssistantModal({ open, onClose }: { open: boolean; onClose: () => voi
       if (error) {
         const context = (error as { context?: unknown }).context;
         if (context instanceof Response) {
-          const details = (await context.clone().json().catch(() => null)) as
-            | { error?: string | { message?: string } }
-            | null;
+          const details = (await context.clone().json().catch(() => null)) as { error?: string | { message?: string } } | null;
           const responseError = details?.error;
-          const message =
-            typeof responseError === 'string'
-              ? responseError
-              : responseError && typeof responseError === 'object'
-                ? responseError.message
-                : undefined;
+          const message = typeof responseError === 'string' ? responseError : responseError && typeof responseError === 'object' ? responseError.message : undefined;
           if (message) throw new Error(message);
         }
         throw new Error(error.message || 'تعذر الاتصال بمركز المساعد الذكي.');
@@ -75,11 +68,7 @@ function AIAssistantModal({ open, onClose }: { open: boolean; onClose: () => voi
     } catch (err: any) {
       setMessages((current) => [
         ...current,
-        {
-          role: 'assistant',
-          content: err.message || 'حدث خطأ في الاتصال، حاول مرة أخرى.',
-          error: true,
-        },
+        { role: 'assistant', content: err.message || 'حدث خطأ في الاتصال، حاول مرة أخرى.', error: true },
       ]);
     } finally {
       setLoading(false);
@@ -156,7 +145,7 @@ function AIAssistantModal({ open, onClose }: { open: boolean; onClose: () => voi
 // --- المكونات المساعدة ---
 function Avatar({ profile, large = false, storyBorder = false, isCloseFriends = false, extraLarge = false }: { profile?: Partial<Profile> | null; large?: boolean; storyBorder?: boolean; isCloseFriends?: boolean; extraLarge?: boolean }) {
   const initials = (displayName(profile).replace('@', '').trim().slice(0, 2) || 'آ').toUpperCase();
-  const sizeClass = extraLarge ? 'w-16 h-16 text-lg' : large ? 'w-12 h-12 text-base' : 'w-8 h-8 text-xs';
+  const sizeClass = extraLarge ? 'w-16 h-16 text-lg' : large ? 'w-11 h-11 text-base' : 'w-8 h-8 text-xs';
   const borderClass = isCloseFriends 
     ? 'ring-2 ring-emerald-500 ring-offset-2 ring-offset-zinc-900' 
     : storyBorder 
@@ -186,21 +175,64 @@ export function AuthPage({ mode, afterAuth }: { mode: 'login' | 'signup'; afterA
     setBusy(true); setError(''); setSuccess('');
     try {
       if (signUp) {
+        const currentOrigin = typeof window !== 'undefined' ? window.location.origin : undefined;
+
+        // المحاولة الأولى: استخدام origin الموقع للحفاظ على سلاسة التوجيه
         const { data, error: authError } = await supabase.auth.signUp({
           email: email.trim(),
           password,
-          options: { data: { username: username.trim().toLowerCase(), full_name: fullName.trim() } },
+          options: { 
+            ...(currentOrigin ? { emailRedirectTo: currentOrigin } : {}),
+            data: { 
+              username: username.trim().toLowerCase(), 
+              full_name: fullName.trim() 
+            } 
+          },
         });
-        if (authError) throw authError;
-        if (data.session) { afterAuth(); setLocation('/feed'); } 
-        else { setSuccess('أرسلنا رابط التحقق إلى بريدك الإلكتروني.'); }
+
+        if (authError) {
+          // آلية الأمان الفائقة: إذا رفض Supabase مسار التوجيه (Invalid path)
+          const isPathError = /invalid path|request url|redirect/i.test(authError.message || '');
+          if (isPathError) {
+            console.warn('تجاوز خطأ مسار التوجيه وإعادة المحاولة التلقائية بدون emailRedirectTo...');
+            const { data: retryData, error: retryError } = await supabase.auth.signUp({
+              email: email.trim(),
+              password,
+              options: {
+                data: {
+                  username: username.trim().toLowerCase(),
+                  full_name: fullName.trim()
+                }
+              }
+            });
+
+            if (retryError) throw retryError;
+
+            if (retryData.session) {
+              afterAuth();
+              setLocation('/feed');
+            } else {
+              setSuccess('تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول مباشرة.');
+            }
+            return;
+          }
+          throw authError;
+        }
+
+        if (data.session) { 
+          afterAuth(); 
+          setLocation('/feed'); 
+        } else { 
+          setSuccess('تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول مباشرة.'); 
+        }
       } else {
         const { error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
         if (authError) throw authError;
-        afterAuth(); setLocation('/feed');
+        afterAuth(); 
+        setLocation('/feed');
       }
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'حدث خطأ. حاول مرة أخرى.');
+    } catch (reason: any) {
+      setError(reason?.message || 'حدث خطأ في الاتصال. حاول مرة أخرى.');
     } finally { setBusy(false); }
   };
 
@@ -769,51 +801,106 @@ function StoriesBar({ userId, currentProfile }: { userId: string; currentProfile
   );
 }
 
-// --- كارت المنشور ---
+// --- كارت المنشور العصري بنمط (X / Twitter Carousel + Optimistic UI) ---
 function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserId: string; onRefresh: () => void }) {
   const [commentText, setCommentText] = useState('');
   const [comments, setComments] = useState<any[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const trackRef = useRef<HTMLDivElement>(null);
+
+  // Optimistic UI states
+  const [liked, setLiked] = useState((post.likes || []).some(like => like.user_id === currentUserId));
+  const [likesCount, setLikesCount] = useState(post.likes?.length || 0);
   const [reposted, setReposted] = useState(false);
   const [bookmarked, setBookmarked] = useState(false);
 
-  const liked = (post.likes || []).some(like => like.user_id === currentUserId);
+  const urls = useMemo(() => {
+    if (post.media_urls && post.media_urls.length > 0) return post.media_urls;
+    if (post.media_url) return [post.media_url];
+    return [];
+  }, [post.media_urls, post.media_url]);
 
   useEffect(() => {
+    setLiked((post.likes || []).some(like => like.user_id === currentUserId));
+    setLikesCount(post.likes?.length || 0);
     if (!supabaseConfigured) return;
     void supabase.from('reposts').select('id').eq('post_id', post.id).eq('user_id', currentUserId).maybeSingle().then(({ data }) => setReposted(Boolean(data)));
     void supabase.from('bookmarks').select('id').eq('post_id', post.id).eq('user_id', currentUserId).maybeSingle().then(({ data }) => setBookmarked(Boolean(data)));
-  }, [post.id, currentUserId]);
+  }, [post, currentUserId]);
+
+  const handleScroll = useCallback(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const idx = Math.round(Math.abs(el.scrollLeft) / el.clientWidth);
+    setCurrentImageIndex(Math.min(idx, urls.length - 1));
+  }, [urls.length]);
+
+  const goToImage = (i: number) => {
+    const el = trackRef.current;
+    if (!el) return;
+    el.scrollTo({ left: -i * el.clientWidth, behavior: 'smooth' });
+  };
 
   const toggleLike = async () => {
+    const prevLiked = liked;
+    const prevCount = likesCount;
+
+    setLiked(!prevLiked);
+    setLikesCount(prevLiked ? prevCount - 1 : prevCount + 1);
+
     if (!supabaseConfigured) return;
-    if (liked) {
-      await supabase.from('likes').delete().eq('post_id', post.id).eq('user_id', currentUserId);
-    } else {
-      await supabase.from('likes').insert({ post_id: post.id, user_id: currentUserId });
+    try {
+      if (prevLiked) {
+        await supabase.from('likes').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+      } else {
+        await supabase.from('likes').insert({ post_id: post.id, user_id: currentUserId });
+      }
+    } catch {
+      setLiked(prevLiked);
+      setLikesCount(prevCount);
     }
-    onRefresh();
   };
 
   const toggleRepost = async () => {
+    const prevReposted = reposted;
+    setReposted(!prevReposted);
+
     if (!supabaseConfigured) return;
-    if (reposted) {
-      await supabase.from('reposts').delete().eq('post_id', post.id).eq('user_id', currentUserId);
-      setReposted(false);
-    } else {
-      await supabase.from('reposts').insert({ post_id: post.id, user_id: currentUserId });
-      setReposted(true);
+    try {
+      if (prevReposted) {
+        await supabase.from('reposts').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+      } else {
+        await supabase.from('reposts').insert({ post_id: post.id, user_id: currentUserId });
+      }
+    } catch {
+      setReposted(prevReposted);
     }
   };
 
   const toggleBookmark = async () => {
+    const prevBookmarked = bookmarked;
+    setBookmarked(!prevBookmarked);
+
     if (!supabaseConfigured) return;
-    if (bookmarked) {
-      await supabase.from('bookmarks').delete().eq('post_id', post.id).eq('user_id', currentUserId);
-      setBookmarked(false);
+    try {
+      if (prevBookmarked) {
+        await supabase.from('bookmarks').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+      } else {
+        await supabase.from('bookmarks').insert({ post_id: post.id, user_id: currentUserId });
+      }
+    } catch {
+      setBookmarked(prevBookmarked);
+    }
+  };
+
+  const handleShare = async () => {
+    const shareUrl = `${window.location.origin}/post/${post.id}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'منشور على آني', url: shareUrl }); } catch {}
     } else {
-      await supabase.from('bookmarks').insert({ post_id: post.id, user_id: currentUserId });
-      setBookmarked(true);
+      await navigator.clipboard.writeText(shareUrl);
+      alert('تم نسخ رابط المنشور للمشاركة!');
     }
   };
 
@@ -832,7 +919,6 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
     await supabase.from('comments').insert({ post_id: post.id, user_id: currentUserId, content: commentText.trim() });
     setCommentText('');
     await loadComments();
-    onRefresh();
     setBusy(false);
   };
 
@@ -845,15 +931,17 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
   };
 
   return (
-    <article className="post-card card fade-up w-full overflow-hidden p-4 bg-zinc-900 border border-zinc-800 rounded-2xl mb-3 dir-rtl min-w-0">
-      <div className="flex items-center justify-between w-full mb-2 min-w-0">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <Avatar profile={post.author} large />
-          <div className="post-meta min-w-0 flex-1">
-            <Link href={`/profile/${post.user_id}`} className="user-link block truncate">
-              <strong className="text-white text-xs font-bold truncate block">{displayName(post.author)}</strong>
+    <article className="post-card fade-up">
+      <header className="flex items-start gap-3 w-full">
+        <Avatar profile={post.author} large />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Link href={`/profile/${post.user_id}`} className="hover:underline">
+              <strong className="text-white text-sm font-bold truncate block">{displayName(post.author)}</strong>
             </Link>
-            <time className="text-[10px] text-zinc-400 block">{formatDate(post.created_at)}</time>
+            <span className="text-zinc-500 text-xs truncate" dir="ltr">@{post.author?.username || 'user'}</span>
+            <span className="text-zinc-600 text-xs">·</span>
+            <time className="text-zinc-500 text-xs whitespace-nowrap">{formatDate(post.created_at)}</time>
           </div>
         </div>
         {post.user_id === currentUserId && (
@@ -861,43 +949,73 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
             <Trash2 size={16} />
           </button>
         )}
-      </div>
+      </header>
 
-      <div className="post-body w-full min-w-0">
-        {post.content && (
-          <p className="text-xs my-2 text-zinc-200 whitespace-pre-line leading-relaxed break-words min-w-0 overflow-wrap-anywhere">
-            {post.content}
-          </p>
-        )}
+      {post.content && (
+        <p className="post-content text-sm text-zinc-200 mt-2.5 leading-relaxed">
+          {post.content}
+        </p>
+      )}
 
-        {post.media_url && (post.type === 'reel'
-          ? <video className="media-post rounded-xl mt-2 max-h-96 w-full object-cover" src={post.media_url} controls playsInline preload="metadata" />
-          : <img className="media-post rounded-xl mt-2 max-h-96 w-full object-cover" src={post.media_url} alt="" />)}
-
-        <div className="flex items-center justify-between text-xs text-zinc-400 border-t border-zinc-800/80 pt-2.5 mt-3 w-full shrink-0 flex-nowrap overflow-x-auto no-scrollbar">
-          <div className="flex items-center gap-4 shrink-0">
-            <button type="button" className={`flex items-center gap-1 hover:text-pink-500 transition shrink-0 ${liked ? 'text-pink-500 font-bold' : ''}`} onClick={() => void toggleLike()}>
-              <Heart size={18} fill={liked ? 'currentColor' : 'none'} />
-              <span>{post.likes?.length || 0}</span>
-            </button>
-
-            <button type="button" className="flex items-center gap-1 hover:text-blue-400 transition shrink-0" onClick={() => comments === null ? void loadComments() : setComments(null)}>
-              <MessageSquare size={17} />
-              <span>{post.comments?.length || 0}</span>
-            </button>
-
-            <button type="button" className={`flex items-center gap-1 hover:text-emerald-400 transition shrink-0 ${reposted ? 'text-emerald-400 font-bold' : ''}`} onClick={toggleRepost}>
-              <Repeat size={17} />
-              <span>إعادة نشر</span>
-            </button>
-
-            <button type="button" className="flex items-center gap-1 hover:text-purple-400 transition shrink-0" onClick={() => alert('تم نسخ رابط المنشور للمشاركة!')}>
-              <Share2 size={17} />
-              <span>مشاركة</span>
-            </button>
+      {/* معرض الصور التمريري (Carousel Slider) */}
+      {urls.length > 0 && (
+        <div className="relative mt-3 rounded-xl overflow-hidden border border-zinc-800">
+          <div ref={trackRef} onScroll={handleScroll} className="carousel-track">
+            {urls.map((url, i) => (
+              <div key={i} className="carousel-slide">
+                {post.type === 'reel' ? (
+                  <video src={url} controls className="w-full max-h-[28rem] object-cover" />
+                ) : (
+                  <img src={url} alt="" className="w-full max-h-[28rem] object-cover select-none" />
+                )}
+              </div>
+            ))}
           </div>
 
-          <button type="button" className={`hover:text-amber-400 transition shrink-0 ${bookmarked ? 'text-amber-400' : ''}`} onClick={toggleBookmark}>
+          {urls.length > 1 && (
+            <>
+              <div className="absolute bottom-2 inset-x-0 flex justify-center pointer-events-auto">
+                <div className="dots bg-black/50 backdrop-blur px-2 py-1 rounded-full">
+                  {urls.map((_, i) => (
+                    <button key={i} onClick={() => goToImage(i)} className={`dot ${i === currentImageIndex ? 'active' : ''}`} />
+                  ))}
+                </div>
+              </div>
+              <div className="absolute top-2 left-2 text-[10px] bg-black/60 text-white px-2 py-0.5 rounded-full backdrop-blur">
+                {currentImageIndex + 1}/{urls.length}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* شريط الأزرار المتجمع جهة اليمين */}
+      <footer className="border-t border-zinc-800/80 pt-2.5 mt-3">
+        <div className="post-actions-right flex items-center gap-4 justify-start w-full">
+          {/* 1. الإعجاب */}
+          <button type="button" className={`post-action-btn flex items-center gap-1.5 ${liked ? 'liked text-pink-500 font-bold' : 'text-zinc-400'}`} onClick={toggleLike}>
+            <Heart size={18} fill={liked ? 'currentColor' : 'none'} />
+            <span className="text-xs">{likesCount}</span>
+          </button>
+
+          {/* 2. التعليقات */}
+          <button type="button" className="post-action-btn flex items-center gap-1.5 text-zinc-400 hover:text-blue-400 transition" onClick={() => comments === null ? void loadComments() : setComments(null)}>
+            <MessageSquare size={18} />
+            <span className="text-xs">{comments?.length || post.comments?.length || 0}</span>
+          </button>
+
+          {/* 3. إعادة النشر */}
+          <button type="button" className={`post-action-btn flex items-center gap-1.5 transition ${reposted ? 'text-emerald-400 font-bold' : 'text-zinc-400 hover:text-emerald-400'}`} onClick={toggleRepost}>
+            <Repeat size={18} />
+          </button>
+
+          {/* 4. المشاركة */}
+          <button type="button" className="post-action-btn flex items-center gap-1.5 text-zinc-400 hover:text-purple-400 transition" onClick={handleShare}>
+            <Send size={18} />
+          </button>
+
+          {/* 5. الحفظ */}
+          <button type="button" className={`post-action-btn flex items-center gap-1.5 transition ${bookmarked ? 'saved text-amber-400' : 'text-zinc-400 hover:text-amber-400'}`} onClick={toggleBookmark}>
             <Bookmark size={18} fill={bookmarked ? 'currentColor' : 'none'} />
           </button>
         </div>
@@ -916,12 +1034,12 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
             </form>
           </div>
         )}
-      </div>
+      </footer>
     </article>
   );
 }
 
-// --- Hook الجلب الموحد للمنشورات والريلز ---
+// --- Hook الجلب الموحد ---
 function usePosts(query: 'feed' | 'reel' | 'profile', targetUserId?: string) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
@@ -933,7 +1051,7 @@ function usePosts(query: 'feed' | 'reel' | 'profile', targetUserId?: string) {
       if (query === 'feed') {
         const { data: rawPosts, error: postsErr } = await supabase
           .from('posts')
-          .select('id, user_id, content, media_url, type, created_at')
+          .select('id, user_id, content, media_url, media_urls, type, created_at')
           .in('type', ['text', 'photo'])
           .order('created_at', { ascending: false })
           .limit(50);
@@ -958,7 +1076,7 @@ function usePosts(query: 'feed' | 'reel' | 'profile', targetUserId?: string) {
       } else if (query === 'profile' && targetUserId) {
         const { data: rawPosts, error: postsErr } = await supabase
           .from('posts')
-          .select('id, user_id, content, media_url, type, created_at')
+          .select('id, user_id, content, media_url, media_urls, type, created_at')
           .eq('user_id', targetUserId)
           .order('created_at', { ascending: false });
 
@@ -985,7 +1103,7 @@ function usePosts(query: 'feed' | 'reel' | 'profile', targetUserId?: string) {
       } else if (query === 'reel') {
         const { data: rawPosts, error: postsErr } = await supabase
           .from('posts')
-          .select('id, user_id, content, media_url, type, created_at')
+          .select('id, user_id, content, media_url, media_urls, type, created_at')
           .eq('type', 'reel')
           .order('created_at', { ascending: false })
           .limit(50);
@@ -1352,150 +1470,221 @@ function ProfilePage({ targetUserId, currentUserId, profile, onProfileUpdate }: 
   );
 }
 
-// --- صفحة Reels ---
-function ReelsPage({ userId }: { userId: string }) {
-  const { posts, loading, refresh } = usePosts('reel');
-  const [editingPost, setEditingPost] = useState<Post | null>(null);
-  const [editContent, setEditContent] = useState('');
-  const [editFile, setEditFile] = useState<File | null>(null);
-  const [updating, setUpdating] = useState(false);
+// --- شريحة ريل مع أزرار عائمة مرتفعة ومتحركة مع كل فيديو ---
+function ReelSlide({ post, currentUserId }: { post: Post; currentUserId: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [liked, setLiked] = useState((post.likes || []).some(l => l.user_id === currentUserId));
+  const [likesCount, setLikesCount] = useState(post.likes?.length || 0);
+  const [saved, setSaved] = useState(false);
+  const [reposted, setReposted] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  const handleUpdateReel = async () => {
-    if (!supabaseConfigured || !editingPost) return;
-    setUpdating(true);
-    try {
-      let mediaUrl = editingPost.media_url;
+  useEffect(() => {
+    const video = videoRef.current;
+    const container = containerRef.current;
+    if (!video || !container) return;
 
-      if (editFile) {
-        const safeName = editFile.name.replace(/[^a-zA-Z0-9._-]/g, '-');
-        const uploadedPath = `${userId}/reel-${Date.now()}-${safeName}`;
-        const { error: uploadErr } = await supabase.storage.from(storageBucket).upload(uploadedPath, editFile, { upsert: true, contentType: editFile.type });
-        if (uploadErr) throw uploadErr;
-        mediaUrl = supabase.storage.from(storageBucket).getPublicUrl(uploadedPath).data.publicUrl;
-      }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            video.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+          } else {
+            video.pause();
+            setPlaying(false);
+          }
+        });
+      },
+      { threshold: 0.6 }
+    );
 
-      await supabase.from('posts').update({
-        content: editContent,
-        media_url: mediaUrl
-      }).eq('id', editingPost.id);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
-      setEditingPost(null);
-      setEditFile(null);
-      refresh();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'فشل تعديل الريل.');
-    } finally {
-      setUpdating(false);
+  const togglePlay = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) {
+      v.play();
+      setPlaying(true);
+    } else {
+      v.pause();
+      setPlaying(false);
     }
   };
 
-  const handleDeleteReel = async (postId: string) => {
+  const toggleLike = async () => {
+    const prevLiked = liked;
+    const prevCount = likesCount;
+    setLiked(!prevLiked);
+    setLikesCount(prevLiked ? prevCount - 1 : prevCount + 1);
+
     if (!supabaseConfigured) return;
-    if (confirm('هل أنت تأكد من رغبتك في حذف مقطع الريل هذا نهائياً؟')) {
-      await supabase.from('posts').delete().eq('id', postId);
-      refresh();
+    try {
+      if (prevLiked) {
+        await supabase.from('likes').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+      } else {
+        await supabase.from('likes').insert({ post_id: post.id, user_id: currentUserId });
+      }
+    } catch {
+      setLiked(prevLiked);
+      setLikesCount(prevCount);
+    }
+  };
+
+  const toggleBookmark = async () => {
+    const prevSaved = saved;
+    setSaved(!prevSaved);
+
+    if (!supabaseConfigured) return;
+    try {
+      if (prevSaved) {
+        await supabase.from('bookmarks').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+      } else {
+        await supabase.from('bookmarks').insert({ post_id: post.id, user_id: currentUserId });
+      }
+    } catch {
+      setSaved(prevSaved);
+    }
+  };
+
+  const toggleRepost = async () => {
+    const prevReposted = reposted;
+    setReposted(!prevReposted);
+
+    if (!supabaseConfigured) return;
+    try {
+      if (prevReposted) {
+        await supabase.from('reposts').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+      } else {
+        await supabase.from('reposts').insert({ post_id: post.id, user_id: currentUserId });
+      }
+    } catch {
+      setReposted(prevReposted);
+    }
+  };
+
+  const handleShare = async () => {
+    const shareUrl = `${window.location.origin}/post/${post.id}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'ريل على آني', url: shareUrl }); } catch {}
+    } else {
+      await navigator.clipboard.writeText(shareUrl);
+      alert('تم نسخ رابط الريل للمشاركة!');
     }
   };
 
   return (
-    <section className="new-view p-0 max-w-lg mx-auto">
-      {loading && <div className="status-box">جاري تحميل الريلز...</div>}
-      {!loading && !posts.length && (
-        <div className="empty-state card text-center py-12">
-          <Film size={32} className="mx-auto text-pink-500 mb-2" />
-          <h2 className="text-white font-bold">لا يوجد ريلز منشور حالياً</h2>
-          <p className="text-xs text-zinc-400 mt-1">انقر على علامة (+) بالأعلى لنشر أول فيديو لك!</p>
-        </div>
-      )}
+    <section ref={containerRef} className="reel-slide relative w-full h-screen overflow-hidden bg-black">
+      <video
+        ref={videoRef}
+        src={post.media_url || ''}
+        loop
+        playsInline
+        onClick={togglePlay}
+        className="w-full h-full object-cover cursor-pointer"
+      />
 
-      <div className="reels-feed space-y-4">
-        {posts.map(post => (
-          <article className="relative w-full h-[82vh] bg-black rounded-3xl overflow-hidden flex items-center justify-center border border-zinc-800 shadow-2xl" key={post.id}>
-            <video 
-              src={post.media_url || ''} 
-              autoPlay 
-              loop 
-              muted 
-              playsInline 
-              controls
-              preload="metadata"
-              className="w-full h-full object-cover" 
-            />
-
-            <div className="absolute bottom-4 right-4 left-16 z-20 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 rounded-2xl backdrop-blur-xs text-white">
-              <strong className="text-xs block font-bold">{displayName(post.author)}</strong>
-              {post.content && <p className="text-xs text-zinc-200 mt-1">{post.content}</p>}
-            </div>
-
-            <div className="absolute right-3 bottom-12 z-30 flex flex-col items-center gap-4 text-white bg-black/40 p-2 rounded-full backdrop-blur-md border border-white/10">
-              <button className="flex flex-col items-center gap-0.5 hover:text-pink-500 transition">
-                <Heart size={20} />
-                <span className="text-[10px] font-bold">{post.likes?.length || 0}</span>
-              </button>
-
-              <button className="flex flex-col items-center gap-0.5 hover:text-blue-400 transition">
-                <MessageSquare size={19} />
-                <span className="text-[10px] font-bold">{post.comments?.length || 0}</span>
-              </button>
-
-              <button className="flex flex-col items-center gap-0.5 hover:text-emerald-400 transition">
-                <Repeat size={19} />
-              </button>
-
-              <button className="flex flex-col items-center gap-0.5 hover:text-purple-400 transition" onClick={() => alert('تم نسخ رابط الريل للمشاركة!')}>
-                <Share2 size={19} />
-              </button>
-
-              <button className="hover:text-amber-400 transition" onClick={() => {
-                if (post.user_id === userId) {
-                  setEditingPost(post);
-                  setEditContent(post.content || '');
-                } else {
-                  alert('تم حفظ الريل للمفضلة!');
-                }
-              }}>
-                <MoreVertical size={20} />
-              </button>
-            </div>
-          </article>
-        ))}
-      </div>
-
-      {editingPost && (
-        <div className="modal-overlay" onClick={() => setEditingPost(null)}>
-          <div className="modal-content max-w-sm w-full bg-zinc-900 border border-zinc-800 p-4 rounded-2xl space-y-3" onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
-              <h3 className="font-bold text-white text-sm flex items-center gap-1">
-                <Edit3 size={16} className="text-pink-500" /> تعديل/استبدال مقطع الريل
-              </h3>
-              <button onClick={() => setEditingPost(null)}><X size={18} className="text-zinc-400" /></button>
-            </div>
-
-            <textarea 
-              value={editContent} 
-              onChange={e => setEditContent(e.target.value)} 
-              className="w-full bg-zinc-950 border border-zinc-800 p-2.5 rounded-xl text-xs text-white outline-none resize-none"
-              rows={3}
-            />
-
-            <label className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 p-2.5 rounded-xl cursor-pointer hover:bg-zinc-800 text-xs text-zinc-300">
-              <Video size={16} className="text-purple-400" />
-              <span>{editFile ? editFile.name : 'استبدال ملف الفيديو الحالي بمقطع جديد'}</span>
-              <input type="file" accept="video/*" className="hidden" onChange={e => e.target.files?.[0] && setEditFile(e.target.files[0])} />
-            </label>
-
-            <div className="flex justify-between items-center pt-2 border-t border-zinc-800">
-              <button onClick={() => handleDeleteReel(editingPost.id)} className="text-xs text-red-400 flex items-center gap-1 hover:underline">
-                <Trash2 size={14} /> حذف المقطع
-              </button>
-              <button disabled={updating} onClick={handleUpdateReel} className="button-primary text-xs px-4">
-                {updating ? 'جاري الحفظ...' : 'حفظ التغييرات'}
-              </button>
-            </div>
+      {!playing && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+          <div className="bg-black/50 rounded-full p-5 backdrop-blur-md text-white">
+            <Play size={36} fill="currentColor" />
           </div>
         </div>
       )}
+
+      {/* تفاصيل الريل أسفل الشاشة */}
+      <div className="absolute inset-x-0 bottom-0 pt-24 pb-12 px-4 reel-gradient-bottom z-20 pointer-events-none">
+        <div className="flex items-end justify-between gap-4">
+          <div className="flex-1 min-w-0 text-white pointer-events-auto">
+            <div className="flex items-center gap-2 mb-2">
+              <Avatar profile={post.author} />
+              <span className="font-bold text-sm truncate">{displayName(post.author)}</span>
+            </div>
+            {post.content && <p className="text-sm leading-snug line-clamp-3">{post.content}</p>}
+          </div>
+        </div>
+      </div>
+
+      {/* الأزرار العائمة المرتفعة عن شريط التنقل والمتحركة مع كل فيديو */}
+      <div className="absolute right-4 bottom-28 z-30 flex flex-col items-center gap-4">
+        {/* 1. الإعجاب */}
+        <button onClick={toggleLike} className="flex flex-col items-center gap-1 text-white">
+          <span className={`p-2.5 rounded-full bg-black/40 border border-white/20 backdrop-blur-md transition ${liked ? 'text-pink-500' : ''}`}>
+            <Heart size={22} fill={liked ? 'currentColor' : 'none'} />
+          </span>
+          <span className="text-[11px] font-semibold">{likesCount}</span>
+        </button>
+
+        {/* 2. التعليقات */}
+        <button className="flex flex-col items-center gap-1 text-white">
+          <span className="p-2.5 rounded-full bg-black/40 border border-white/20 backdrop-blur-md">
+            <MessageSquare size={22} />
+          </span>
+          <span className="text-[11px] font-semibold">{post.comments?.length || 0}</span>
+        </button>
+
+        {/* 3. إعادة النشر */}
+        <button onClick={toggleRepost} className="flex flex-col items-center gap-1 text-white">
+          <span className={`p-2.5 rounded-full bg-black/40 border border-white/20 backdrop-blur-md transition ${reposted ? 'text-emerald-400' : ''}`}>
+            <Repeat size={22} />
+          </span>
+        </button>
+
+        {/* 4. المشاركة */}
+        <button onClick={handleShare} className="flex flex-col items-center gap-1 text-white">
+          <span className="p-2.5 rounded-full bg-black/40 border border-white/20 backdrop-blur-md">
+            <Send size={22} />
+          </span>
+        </button>
+
+        {/* 5. الحفظ */}
+        <button onClick={toggleBookmark} className="flex flex-col items-center gap-1 text-white">
+          <span className={`p-2.5 rounded-full bg-black/40 border border-white/20 backdrop-blur-md transition ${saved ? 'text-amber-400' : ''}`}>
+            <Bookmark size={22} fill={saved ? 'currentColor' : 'none'} />
+          </span>
+        </button>
+
+        {/* 6. النقاط الثلاثة خيارات إضافية */}
+        <div className="relative">
+          <button onClick={() => setMenuOpen(!menuOpen)} className="p-2 rounded-full bg-black/40 border border-white/20 backdrop-blur-md text-white">
+            <MoreVertical size={18} />
+          </button>
+
+          {menuOpen && (
+            <div className="absolute right-10 bottom-0 bg-zinc-900 border border-zinc-800 rounded-xl p-2 w-36 text-xs text-white space-y-2 shadow-2xl z-40">
+              <button onClick={() => { alert('تم الإبلاغ عن الفيديو'); setMenuOpen(false); }} className="flex items-center gap-2 w-full text-red-400 p-1.5 hover:bg-zinc-800 rounded-lg">
+                <Flag size={14} /> الإبلاغ
+              </button>
+              <button onClick={() => { alert('تم الحفظ كغير مهتم'); setMenuOpen(false); }} className="flex items-center gap-2 w-full text-zinc-300 p-1.5 hover:bg-zinc-800 rounded-lg">
+                <EyeOff size={14} /> غير مهتم
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
     </section>
+  );
+}
+
+// --- صفحة Reels ---
+function ReelsPage({ userId }: { userId: string }) {
+  const { posts, loading } = usePosts('reel');
+
+  return (
+    <div className="reels-container">
+      {loading && <div className="status-box text-white pt-20">جاري تحميل الريلز...</div>}
+      {!loading && !posts.length && (
+        <div className="empty-state text-center py-24 text-white">
+          <Film size={36} className="mx-auto text-pink-500 mb-2" />
+          <h2 className="font-bold text-lg">لا يوجد ريلز منشور حالياً</h2>
+        </div>
+      )}
+      {!loading && posts.map(post => <ReelSlide key={post.id} post={post} currentUserId={userId} />)}
+    </div>
   );
 }
 
@@ -1727,9 +1916,8 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
   const [unreadCount, setUnreadCount] = useState(0);
 
   const [postText, setPostText] = useState('');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileType, setFileType] = useState<'image' | 'video' | null>(null);
-  const [overlayText, setOverlayText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createError, setCreateError] = useState('');
 
@@ -1740,10 +1928,6 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
     });
   }, [userId, showNotifsModal]);
 
-  const previewUrl = useMemo(() => selectedFile ? URL.createObjectURL(selectedFile) : null, [selectedFile]);
-
-  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
-
   const handlePublish = async () => {
     if (!supabaseConfigured) {
       setCreateError('إعدادات الاتصال بقاعدة البيانات غير مكتملة في Secrets.');
@@ -1751,41 +1935,43 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
     }
 
     const content = postText.trim();
-    if (!content && !selectedFile) return;
+    if (!content && selectedFiles.length === 0) return;
 
     setIsSubmitting(true);
     setCreateError('');
     try {
-      let mediaUrl: string | null = null;
+      const uploadedUrls: string[] = [];
       let type: 'text' | 'photo' | 'reel' = 'text';
 
-      if (selectedFile && fileType) {
-        const safeName = selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, '-');
-        const uploadedPath = `${userId}/${Date.now()}-${safeName}`;
+      if (selectedFiles.length > 0 && fileType) {
+        for (const file of selectedFiles) {
+          const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+          const uploadedPath = `${userId}/${Date.now()}-${safeName}`;
 
-        const { error: uploadError } = await supabase.storage
-          .from(storageBucket)
-          .upload(uploadedPath, selectedFile, { upsert: true, contentType: selectedFile.type });
+          const { error: uploadError } = await supabase.storage
+            .from(storageBucket)
+            .upload(uploadedPath, file, { upsert: true, contentType: file.type });
 
-        if (uploadError) throw new Error(`فشل رفع الملف: ${uploadError.message}`);
+          if (uploadError) throw new Error(`فشل رفع الملف: ${uploadError.message}`);
 
-        const publicData = supabase.storage.from(storageBucket).getPublicUrl(uploadedPath);
-        mediaUrl = publicData.data.publicUrl;
+          const publicData = supabase.storage.from(storageBucket).getPublicUrl(uploadedPath);
+          uploadedUrls.push(publicData.data.publicUrl);
+        }
         type = fileType === 'image' ? 'photo' : 'reel';
       }
 
       const { error: postError } = await supabase.from('posts').insert({
         user_id: userId,
-        content: overlayText ? `${content}\n[نص الصورة: ${overlayText}]` : content,
-        media_url: mediaUrl,
+        content,
+        media_url: uploadedUrls[0] || null,
+        media_urls: uploadedUrls,
         type,
       });
 
       if (postError) throw new Error(`فشل حفظ المنشور: ${postError.message}`);
 
       setPostText('');
-      setOverlayText('');
-      setSelectedFile(null);
+      setSelectedFiles([]);
       setFileType(null);
       setShowCreateModal(false);
       window.dispatchEvent(new Event('aani:post-created'));
@@ -1859,26 +2045,30 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
               rows={3} 
             />
 
-            {selectedFile && (
-              <div className="relative w-full rounded-xl overflow-hidden border border-zinc-800 bg-black aspect-square flex items-center justify-center">
-                {fileType === 'image' ? (
-                  <img src={previewUrl || ''} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  <video src={previewUrl || ''} controls className="w-full h-full object-cover" />
-                )}
-                <button type="button" onClick={() => { setSelectedFile(null); setFileType(null); }} className="absolute top-2 right-2 bg-black/70 text-white rounded-full p-1">
-                  <X size={14} />
-                </button>
+            {selectedFiles.length > 0 && (
+              <div className="flex gap-2 overflow-x-auto py-2 no-scrollbar">
+                {selectedFiles.map((file, i) => (
+                  <div key={i} className="relative w-20 h-20 rounded-xl overflow-hidden border border-zinc-800 shrink-0 bg-black">
+                    {fileType === 'image' ? (
+                      <img src={URL.createObjectURL(file)} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <video src={URL.createObjectURL(file)} className="w-full h-full object-cover" />
+                    )}
+                    <button type="button" onClick={() => setSelectedFiles(files => files.filter((_, idx) => idx !== i))} className="absolute top-1 right-1 bg-black/70 text-white rounded-full p-0.5">
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
 
-            <input type="file" id="image-upload" accept="image/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) { setSelectedFile(e.target.files[0]); setFileType('image'); } }} />
-            <input type="file" id="video-upload" accept="video/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) { setSelectedFile(e.target.files[0]); setFileType('video'); } }} />
+            <input type="file" id="image-upload" multiple accept="image/*" className="hidden" onChange={(e) => { if (e.target.files) { setSelectedFiles(Array.from(e.target.files)); setFileType('image'); } }} />
+            <input type="file" id="video-upload" accept="video/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) { setSelectedFiles([e.target.files[0]]); setFileType('video'); } }} />
 
             <div className="flex items-center justify-between pt-2 border-t border-zinc-800 text-xs">
               <div className="flex gap-2">
                 <label htmlFor="image-upload" className="flex items-center gap-1 px-3 py-2 text-pink-400 bg-pink-950/40 rounded-xl cursor-pointer">
-                  <ImagePlus size={15} /> صورة
+                  <ImagePlus size={15} /> صور
                 </label>
                 <label htmlFor="video-upload" className="flex items-center gap-1 px-3 py-2 text-purple-400 bg-purple-950/40 rounded-xl cursor-pointer">
                   <Video size={15} /> فيديو
@@ -1888,7 +2078,7 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
               <button 
                 type="button"
                 onClick={() => void handlePublish()}
-                disabled={isSubmitting || (!postText.trim() && !selectedFile)}
+                disabled={isSubmitting || (!postText.trim() && selectedFiles.length === 0)}
                 className="px-5 py-2 bg-pink-600 disabled:opacity-50 text-white rounded-xl font-semibold"
               >
                 {isSubmitting ? 'جاري النشر...' : 'نشر'}
@@ -1902,7 +2092,7 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
       <SettingsModal isOpen={showSettingsModal} onClose={() => setShowSettingsModal(false)} currentProfile={profile} onSignOut={onSignOut} />
       <NotificationsModal isOpen={showNotifsModal} onClose={() => setShowNotifsModal(false)} currentUserId={userId} />
 
-      {/* زر المساعد الذكي العائم على الشاشة */}
+      {/* زر المساعد الذكي العائم */}
       <button
         onClick={() => setShowAssistantModal(true)}
         className="fixed bottom-20 left-6 z-50 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700 text-white p-3.5 rounded-full shadow-2xl flex items-center justify-center transition-transform hover:scale-110 active:scale-95 border border-white/20"
@@ -1911,11 +2101,7 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
         <Bot className="w-6 h-6" />
       </button>
 
-      {/* نافذة المساعد الذكي المباشرة */}
-      <AIAssistantModal 
-        open={showAssistantModal} 
-        onClose={() => setShowAssistantModal(false)} 
-      />
+      <AIAssistantModal open={showAssistantModal} onClose={() => setShowAssistantModal(false)} />
 
       <div className="content-shell pb-16">
         <main className="main-content">{children}</main>
