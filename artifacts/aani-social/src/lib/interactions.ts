@@ -1499,6 +1499,13 @@ export function useSavedPosts(userId: string): SavedPostsState {
         return;
       }
 
+      if (!supabaseConfigured) {
+        // Bookmarks saved on this device only: there is no server to read the
+        // posts from, so there is nothing more we can display.
+        setPosts([]);
+        return;
+      }
+
       const { data: rows, error: postsError } = await supabase
         .from("posts")
         .select("*")
