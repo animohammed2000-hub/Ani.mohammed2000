@@ -1947,6 +1947,17 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createError, setCreateError] = useState('');
 
+  // معاينات الملفات: إنشاء الروابط مرة واحدة لكل ملف مع تنظيفها بعد الاستخدام
+  const filePreviews = useMemo(
+    () => selectedFiles.map((file) => ({ file, url: URL.createObjectURL(file) })),
+    [selectedFiles]
+  );
+
+  useEffect(() => {
+    if (filePreviews.length === 0) return;
+    return () => filePreviews.forEach((preview) => URL.revokeObjectURL(preview.url));
+  }, [filePreviews]);
+
   useEffect(() => {
     if (!supabaseConfigured || !userId) return;
     void supabase.from('notifications').select('id', { count: 'exact' }).eq('user_id', userId).eq('is_read', false).then(({ count }) => {
