@@ -275,7 +275,7 @@ export function readLocalFlags(userId: string): LocalFlags {
 function writeLocalFlag(
   userId: string,
   postId: string,
-  patch: { bookmarked?: boolean; reposted?: boolean; shared?: boolean },
+  patch: LocalPostState,
 ): void {
   const all = { ...readLocalFlags(userId) };
   all[postId] = { ...(all[postId] ?? {}), ...patch };
@@ -284,6 +284,34 @@ function writeLocalFlag(
     window.localStorage.setItem(localKey(userId), JSON.stringify(all));
   } catch {
     /* storage can be unavailable in private mode - ignore */
+  }
+}
+
+/* --- local comments (only used until the database is configured) ---- */
+
+const LOCAL_COMMENTS_KEY = "aani:comments:v1";
+
+function readLocalComments(postId: string): LocalComment[] {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_COMMENTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Record<string, LocalComment[]>;
+    return Array.isArray(parsed[postId]) ? parsed[postId] : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalComments(postId: string, comments: LocalComment[]): void {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_COMMENTS_KEY);
+    const parsed = raw
+      ? (JSON.parse(raw) as Record<string, LocalComment[]>)
+      : {};
+    parsed[postId] = comments;
+    window.localStorage.setItem(LOCAL_COMMENTS_KEY, JSON.stringify(parsed));
+  } catch {
+    /* ignore quota / private mode errors */
   }
 }
 
