@@ -7,10 +7,16 @@ import {
   Bot, Loader2, Code
 } from 'lucide-react';
 
-import { Toaster } from '@/components/ui/toaster';
+import { Toaster, toast } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { supabase, supabaseConfigured, storageBucket } from '@/lib/supabase';
-import { displayName, formatDate, normalizeProfile, type Post, type Profile } from '@/lib/types';
+import { displayName, formatCount, formatDate, normalizeProfile, type Post, type Profile } from '@/lib/types';
+import {
+  decoratePosts,
+  useInteractionRealtime,
+  usePostComments,
+  usePostInteractions,
+} from '@/lib/interactions';
 import NotFound from '@/pages/not-found';
 import '@/index.css';
 
@@ -1072,7 +1078,7 @@ function FeedPage({ userId, profile }: { userId: string; profile: Profile | null
         </div>
       )}
 
-      {!loading && posts.length > 0 && <div className="posts-list space-y-3">{posts.map(post => <PostCard key={post.id} post={post} currentUserId={userId} onRefresh={() => void refresh()} />)}</div>}
+      {!loading && posts.length > 0 && <div className="posts-list space-y-3">{posts.map(post => <PostCard key={post.id} post={post} currentUserId={userId} profile={profile} onRefresh={() => void refresh()} />)}</div>}
     </section>
   );
 }
@@ -1371,7 +1377,7 @@ function ProfilePage({ targetUserId, currentUserId, profile, onProfileUpdate }: 
       {!loading && posts.length > 0 && (
         <div className="posts-list space-y-3">
           {posts.map(post => (
-            <PostCard key={post.id} post={post} currentUserId={currentUserId} onRefresh={() => void refresh()} />
+            <PostCard key={post.id} post={post} currentUserId={currentUserId} profile={profile} onRefresh={() => void refresh()} />
           ))}
         </div>
       )}
@@ -2086,7 +2092,7 @@ function App() {
           </Switch>
         )}
       </WouterRouter>
-      <Toaster />
+      <Toaster theme="dark" position="top-center" richColors closeButton />
     </TooltipProvider>
   );
 }
