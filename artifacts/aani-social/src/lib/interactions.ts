@@ -1262,8 +1262,15 @@ export function usePostComments(
 
   const load = useCallback(async () => {
     if (!supabaseConfigured) {
-      setComments([]);
-      setError("قاعدة البيانات غير مهيأة");
+      const rows = readLocalComments(post.id).map((row) => ({
+        ...row,
+        author: row.user_id === userId ? (profile ?? row.author) : row.author,
+      }));
+      setComments(rows);
+      setError(null);
+      if (!isPending(post.id, userId)) {
+        patchCache(post.id, userId, { comments: rows.length });
+      }
       return;
     }
     setLoading(true);
