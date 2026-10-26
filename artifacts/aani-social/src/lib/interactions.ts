@@ -60,10 +60,27 @@ export type PostCommentRow = {
 
 type RawRow = Record<string, any>;
 
-type LocalFlags = Record<
-  string,
-  { bookmarked?: boolean; reposted?: boolean; shared?: boolean }
->;
+type LocalPostState = {
+  liked?: boolean;
+  bookmarked?: boolean;
+  reposted?: boolean;
+  shared?: boolean;
+  likes?: number;
+  reposts?: number;
+  shares?: number;
+  comments?: number;
+};
+
+type LocalFlags = Record<string, LocalPostState>;
+
+type LocalComment = {
+  id: string;
+  post_id: string;
+  user_id: string;
+  content: string;
+  created_at: string;
+  author: Partial<Profile> | null;
+};
 
 const EMPTY_SNAPSHOT: InteractionSnapshot = {
   likes: 0,
