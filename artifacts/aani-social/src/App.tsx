@@ -526,12 +526,20 @@ function StoriesBar({ userId, currentProfile }: { userId: string; currentProfile
 
   const handleDeleteStory = async () => {
     if (!supabaseConfigured || !currentStory) return;
-    if (confirm('هل أنت تأكد من رغبتك في حذف هذه الستوري؟')) {
-      await supabase.from('stories').delete().eq('id', currentStory.id);
-      setShowMenu(false);
-      await fetchStories();
-      handleNextStory();
+    if (currentStory.user_id !== userId) return;
+    if (!confirm('هل أنت متأكد من رغبتك في حذف هذه الستوري؟')) return;
+    const { error } = await supabase
+      .from('stories')
+      .delete()
+      .eq('id', currentStory.id)
+      .eq('user_id', userId);
+    if (error) {
+      alert(error.message);
+      return;
     }
+    setShowMenu(false);
+    await fetchStories();
+    handleNextStory();
   };
 
   return (
