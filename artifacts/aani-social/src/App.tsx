@@ -1048,17 +1048,79 @@ function PostCard({
             <time className="text-[10px] text-zinc-400 block">{formatDate(post.created_at)}</time>
           </div>
         </div>
-        {post.user_id === currentUserId && (
+        <div className="relative shrink-0" ref={menuRef}>
           <button
-            onClick={handleDeletePost}
-            className="text-zinc-500 hover:text-red-400 p-1 transition shrink-0"
-            title="حذف المنشور"
-            disabled={deleting}
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={showMenu}
+            aria-label="خيارات المنشور"
+            className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+            onClick={() => setShowMenu((open) => !open)}
           >
-            {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+            <MoreVertical size={16} />
           </button>
-        )}
+
+          {showMenu && (
+            <div
+              role="menu"
+              className="absolute left-0 z-40 mt-1 w-48 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-950/95 py-1 text-[11px] shadow-2xl backdrop-blur"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => void handleCopyLink()}
+                className="flex w-full items-center gap-2 px-3 py-2 text-start text-zinc-200 transition hover:bg-zinc-800"
+              >
+                <Link2 size={13} /> نسخ رابط المنشور
+              </button>
+
+              {isOwner ? (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={openEditModal}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-start text-zinc-200 transition hover:bg-zinc-800"
+                  >
+                    <Edit3 size={13} /> تعديل المنشور
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={deleting}
+                    onClick={() => {
+                      setShowMenu(false);
+                      void handleDeletePost();
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-start text-red-400 transition hover:bg-red-500/10 disabled:opacity-60"
+                  >
+                    {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                    حذف المنشور
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setShowMenu(false);
+                    setShowReport(true);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-start text-amber-300 transition hover:bg-amber-500/10"
+                >
+                  <Flag size={13} /> إبلاغ عن المنشور
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
+
+      {post.reposted_at && (
+        <div className="mb-2 flex items-center gap-1.5 text-[10px] font-medium text-emerald-400/90">
+          <Repeat size={12} /> أعاد {displayName(post.repost_attribution)} نشر هذا المنشور
+        </div>
+      )}
 
       <div className="post-body w-full min-w-0">
         {post.content && (
