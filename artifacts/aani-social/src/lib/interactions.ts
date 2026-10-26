@@ -204,8 +204,11 @@ function localNumber(
   server: number | undefined,
   fallback: number,
 ): number {
+  // Server counters win as soon as they exist; local numbers are only used
+  // while the app runs without a configured database.
+  if (typeof server === "number" && Number.isFinite(server)) return server;
   if (typeof local === "number" && Number.isFinite(local)) return local;
-  return toNumber(server, fallback);
+  return fallback;
 }
 
 /** Read the current state of a post for a user (no React needed). */
