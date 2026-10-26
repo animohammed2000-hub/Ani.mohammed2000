@@ -882,6 +882,35 @@ function PostCard({
   const interactions = usePostInteractions(post, currentUserId);
   const liked = interactions.liked;
 
+  const isOwner = post.user_id === currentUserId;
+
+  // --- post action menu (Edit / Delete / Report / Copy link) ---
+  const [showMenu, setShowMenu] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [editContent, setEditContent] = useState(post.content ?? '');
+  const [editFile, setEditFile] = useState<File | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+  const [reportReason, setReportReason] = useState('محتوى غير مناسب');
+  const [reportDetails, setReportDetails] = useState('');
+  const [reporting, setReporting] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showMenu) return;
+    const closeOnOutsideClick = (event: MouseEvent | TouchEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    document.addEventListener('touchstart', closeOnOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick);
+      document.removeEventListener('touchstart', closeOnOutsideClick);
+    };
+  }, [showMenu]);
+
   const handleDeletePost = async () => {
     if (!supabaseConfigured) return;
     if (!confirm('هل أنت متأكد من رغبتك في حذف هذا المنشور؟')) return;
@@ -894,6 +923,117 @@ function PostCard({
     }
     toast.success('تم حذف المنشور');
     onRefresh();
+  };
+
+  const openEditModal = () => {
+    setEditContent(post.content ?? '');
+    setEditFile(null);
+    setShowMenu(false);
+    setShowEdit(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!supabaseConfigured || savingEdit) return;
+    const nextContent = editContent.trim();
+    if (!nextContent && !post.media_url && !editFile) {
+      toast.error('لا يمكن حفظ منشور فارغ');
+      return;
+    }
+
+    setSavingEdit(true);
+    try {
+      let mediaUrl = post.media_url;
+
+      if (editFile) {
+        const safeName = editFile.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+        const path = `${currentUserId}/post-${post.id}-${Date.now()}-${safeName}`;
+        const { error: uploadError } = await supabase.storage
+          .from(storageBucket)
+          .upload(path, editFile, { upsert: true, contentType: editFile.type });
+        if (uploadError) throw uploadError;
+        mediaUrl = supabase.storage.from(storageBucket).getPublicUrl(path).data.publicUrl;
+      }
+
+      const { error } = await supabase
+        .from('posts')
+        .update({ content: nextContent, media_url: mediaUrl, updated_at: new Date().toISOString() })
+        .eq('id', post.id);
+      if (error) throw error;
+
+      toast.success('تم تحديث المنشور');
+      setShowEdit(false);
+      setEditFile(null);
+      onRefresh();
+    } catch (reason) {
+      if (reason instanceof Error) toast.error(reason.message);
+      else if (typeof reason === 'object' && reason && 'message' in reason) {
+        toast.error(String((reason as { message?: string }).message));
+      } else {
+        toast.error('تعذر تحديث المنشور');
+      }
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleCopyLink = async () => {
+    setShowMenu(false);
+    const url = `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/post/${post.id}`;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const area = document.createElement('textarea');
+        area.value = url;
+        area.setAttribute('readonly', '');
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand('copy');
+        document.body.removeChild(area);
+      }
+      toast.success('تم نسخ رابط المنشور');
+    } catch {
+      toast.error('تعذر نسخ الرابط');
+    }
+  };
+
+  const submitReport = async () => {
+    if (!supabaseConfigured || reporting) return;
+    setReporting(true);
+    const reason = reportDetails.trim()
+      ? `${reportReason} — ${reportDetails.trim()}`
+      : reportReason;
+
+    try {
+      const { error } = await supabase.from('reports').insert({
+        post_id: post.id,
+        reported_user_id: post.user_id,
+        reporter_id: currentUserId,
+        reason,
+        status: 'pending',
+      });
+
+      if (error) throw error;
+      toast.success('تم إرسال البلاغ، شكراً لمساعدتك في الحفاظ على آني.');
+      setShowReport(false);
+      setReportDetails('');
+    } catch (reason_) {
+      const code = (reason_ as { code?: string } | null)?.code;
+      if (code === '23505') {
+        toast.info('سبق أن أبلغت عن هذا المنشور.');
+        setShowReport(false);
+      } else if (code === '42P01' || code === 'PGRST205') {
+        toast.warning(
+          'لم يتم تجهيز جدول البلاغات بعد في قاعدة البيانات. طبّق ملف الترحيل supabase/migrations لتفعيل الإبلاغ.',
+        );
+      } else {
+        toast.error('تعذر إرسال البلاغ، حاول مرة أخرى.');
+      }
+    } finally {
+      setReporting(false);
+    }
   };
 
   return (
