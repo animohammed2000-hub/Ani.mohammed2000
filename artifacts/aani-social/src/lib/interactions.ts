@@ -102,6 +102,8 @@ const cache = new Map<string, InteractionSnapshot>();
 const listeners = new Set<() => void>();
 const pendingWrites = new Map<string, number>();
 const directHydration = new Map<string, number>();
+/** A cached snapshot is considered fresh for this long. */
+const HYDRATION_TTL_MS = 20_000;
 let version = 0;
 
 function keyOf(postId: string, userId: string): string {
