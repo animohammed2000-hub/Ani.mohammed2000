@@ -824,6 +824,7 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
   const [likesCount, setLikesCount] = useState(post.likes?.length || 0);
   const [reposted, setReposted] = useState(false);
   const [bookmarked, setBookmarked] = useState(false);
+  const [isAnimating, setIsAnimating] = useState(false);
 
   const urls = useMemo(() => {
     if (post.media_urls && post.media_urls.length > 0) return post.media_urls;
