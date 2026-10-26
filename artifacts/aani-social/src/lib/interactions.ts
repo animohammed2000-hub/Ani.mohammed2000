@@ -924,14 +924,28 @@ export async function createComment(
 ): Promise<PostCommentRow | null> {
   const trimmed = content.trim();
   if (!trimmed) return null;
-  if (!supabaseConfigured) {
-    toast.error("قاعدة البيانات غير مهيأة، تعذر نشر التعليق");
-    return null;
-  }
 
   markPending(post.id, userId, 1);
   const before = readInteractionState(post, userId);
   patchCache(post.id, userId, { comments: before.comments + 1 });
+
+  if (!supabaseConfigured) {
+    const local: LocalComment = {
+      id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      post_id: post.id,
+      user_id: userId,
+      content: trimmed,
+      created_at: new Date().toISOString(),
+      author: null,
+    };
+    const existing = readLocalComments(post.id);
+    writeLocalComments(post.id, [...existing, local]);
+    writeLocalFlag(userId, post.id, {
+      comments: before.comments + 1,
+    });
+    markPending(post.id, userId, -1);
+    return local;
+  }
 
   try {
     const { data, error } = await supabase
