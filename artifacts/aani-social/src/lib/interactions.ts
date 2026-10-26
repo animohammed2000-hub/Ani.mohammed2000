@@ -416,28 +416,23 @@ async function fetchFallbackSummaries(
     );
     summary.reposts = toNumber(row?.reposts_count, 0);
     summary.shares = toNumber(row?.shares_count, 0);
-    summary.liked = likesFor.some(
+    summary.liked = likeRows.some(
       (like) => like.post_id === postId && like.user_id === userId,
     );
-    summary.bookmarked = ((bookmarks.data ?? []) as RawRow[]).some(
+    summary.bookmarked = bookmarkRows.some(
       (bookmark) =>
         bookmark.post_id === postId && bookmark.user_id === userId,
     );
-    summary.reposted = ((reposts.data ?? []) as RawRow[]).some(
+    summary.reposted = repostRows.some(
       (repost) => repost.post_id === postId && repost.user_id === userId,
     );
-    summary.shared = ((shares.data ?? []) as RawRow[]).some(
+    summary.shared = shareRows.some(
       (share) => share.post_id === postId && share.user_id === userId,
     );
     summaries.set(postId, summary);
   });
 
-  void commentsForUnused();
   return summaries;
-}
-
-function commentsForUnused(): void {
-  /* keeps the destructured comments array referenced for future use */
 }
 
 function countByPost(rows: unknown): Map<string, number> {
