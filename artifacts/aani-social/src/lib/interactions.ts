@@ -1147,7 +1147,7 @@ export async function sharePost(post: Post, userId: string): Promise<void> {
     } catch (error) {
       if ((error as { name?: string } | null)?.name === "AbortError") return;
     }
-  } else if (!(await copyPostLink(post, userId))) {
+  } else if (!(await copyPostLink(post, userId, { silent: true }))) {
     return;
   }
 
