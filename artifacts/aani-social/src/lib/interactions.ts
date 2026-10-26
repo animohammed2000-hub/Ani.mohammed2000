@@ -984,7 +984,17 @@ export async function deleteComment(
   userId: string,
   commentId: string,
 ): Promise<boolean> {
-  if (!supabaseConfigured) return false;
+  if (!supabaseConfigured) {
+    const remaining = readLocalComments(post.id).filter(
+      (item) => item.id !== commentId,
+    );
+    writeLocalComments(post.id, remaining);
+    const before = readInteractionState(post, userId);
+    const comments = Math.max(0, before.comments - 1);
+    patchCache(post.id, userId, { comments });
+    writeLocalFlag(userId, post.id, { comments });
+    return true;
+  }
   markPending(post.id, userId, 1);
   const before = readInteractionState(post, userId);
   patchCache(post.id, userId, {
