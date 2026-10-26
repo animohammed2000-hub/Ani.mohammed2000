@@ -1323,6 +1323,69 @@ function PostCard({
 }
 
 // --- Hook الجلب الموحد للمنشورات والريلز ---
+/**
+ * A profile feed shows the posts a user authored plus the posts they reposted.
+ * Reposts are stored in `reposts` (post_id + user_id) and are merged in here,
+ * newest activity first, tagged with `reposted_at` + `reposter_id` so the card
+ * can show "أعاد النشر".
+ */
+async function mergeProfileReposts(
+  authored: Record<string, any>[],
+  profileUserId: string,
+): Promise<Record<string, any>[]> {
+  const { data: repostRows, error } = await supabase
+    .from('reposts')
+    .select('post_id, created_at, user_id')
+    .eq('user_id', profileUserId)
+    .order('created_at', { ascending: false });
+
+  if (error || !repostRows?.length) return authored;
+
+  const authoredIds = new Set(authored.map((row) => String(row.id)));
+  const repostedIds = Array.from(
+    new Set(
+      repostRows
+        .map((row) => String(row.post_id ?? ''))
+        .filter((id) => id && !authoredIds.has(id)),
+    ),
+  );
+
+  let repostedRows: Record<string, any>[] = [];
+  if (repostedIds.length) {
+    const { data: postRows } = await supabase
+      .from('posts')
+      .select('*')
+      .in('id', repostedIds);
+    repostedRows = (postRows ?? []) as Record<string, any>[];
+  }
+
+  const repostedAtByPost = new Map<string, string>();
+  for (const row of repostRows) {
+    const postId = String(row.post_id ?? '');
+    if (postId && !repostedAtByPost.has(postId)) {
+      repostedAtByPost.set(postId, String(row.created_at ?? new Date().toISOString()));
+    }
+  }
+
+  const merged = [...authored];
+  for (const row of repostedRows) {
+    const postId = String(row.id);
+    merged.push({
+      ...row,
+      reposted_at: repostedAtByPost.get(postId) ?? null,
+      reposter_id: profileUserId,
+    });
+  }
+
+  merged.sort((a, b) => {
+    const aDate = String(a.reposted_at ?? a.created_at ?? '');
+    const bDate = String(b.reposted_at ?? b.created_at ?? '');
+    return new Date(bDate).getTime() - new Date(aDate).getTime();
+  });
+
+  return merged;
+}
+
 function usePosts(
   query: 'feed' | 'reel' | 'profile' | 'single',
   targetUserId?: string,
