@@ -770,78 +770,123 @@ function StoriesBar({ userId, currentProfile }: { userId: string; currentProfile
 }
 
 // --- كارت المنشور ---
-function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserId: string; onRefresh: () => void }) {
-  const [commentText, setCommentText] = useState('');
-  const [comments, setComments] = useState<any[] | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [reposted, setReposted] = useState(false);
-  const [bookmarked, setBookmarked] = useState(false);
+function CommentsPanel({
+  post,
+  currentUserId,
+  profile,
+}: {
+  post: Post;
+  currentUserId: string;
+  profile?: Profile | null;
+}) {
+  const { comments, loading, sending, error, add, remove } = usePostComments(
+    post,
+    currentUserId,
+    profile ?? null,
+    true,
+  );
+  const [text, setText] = useState('');
 
-  const liked = (post.likes || []).some(like => like.user_id === currentUserId);
-
-  useEffect(() => {
-    if (!supabaseConfigured) return;
-    void supabase.from('reposts').select('id').eq('post_id', post.id).eq('user_id', currentUserId).maybeSingle().then(({ data }) => setReposted(Boolean(data)));
-    void supabase.from('bookmarks').select('id').eq('post_id', post.id).eq('user_id', currentUserId).maybeSingle().then(({ data }) => setBookmarked(Boolean(data)));
-  }, [post.id, currentUserId]);
-
-  const toggleLike = async () => {
-    if (!supabaseConfigured) return;
-    if (liked) {
-      await supabase.from('likes').delete().eq('post_id', post.id).eq('user_id', currentUserId);
-    } else {
-      await supabase.from('likes').insert({ post_id: post.id, user_id: currentUserId });
-    }
-    onRefresh();
-  };
-
-  const toggleRepost = async () => {
-    if (!supabaseConfigured) return;
-    if (reposted) {
-      await supabase.from('reposts').delete().eq('post_id', post.id).eq('user_id', currentUserId);
-      setReposted(false);
-    } else {
-      await supabase.from('reposts').insert({ post_id: post.id, user_id: currentUserId });
-      setReposted(true);
-    }
-  };
-
-  const toggleBookmark = async () => {
-    if (!supabaseConfigured) return;
-    if (bookmarked) {
-      await supabase.from('bookmarks').delete().eq('post_id', post.id).eq('user_id', currentUserId);
-      setBookmarked(false);
-    } else {
-      await supabase.from('bookmarks').insert({ post_id: post.id, user_id: currentUserId });
-      setBookmarked(true);
-    }
-  };
-
-  const loadComments = async () => {
-    if (!supabaseConfigured) return;
-    setBusy(true);
-    const { data } = await supabase.from('comments').select('id,post_id,user_id,content,created_at,author:profiles(id,username,full_name,avatar_url)').eq('post_id', post.id).order('created_at', { ascending: true });
-    setComments(data || []);
-    setBusy(false);
-  };
-
-  const addComment = async (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!supabaseConfigured || !commentText.trim()) return;
-    setBusy(true);
-    await supabase.from('comments').insert({ post_id: post.id, user_id: currentUserId, content: commentText.trim() });
-    setCommentText('');
-    await loadComments();
-    onRefresh();
-    setBusy(false);
+    if (!text.trim() || sending) return;
+    const ok = await add(text);
+    if (ok) setText('');
   };
+
+  return (
+    <div className="mt-3 w-full border-t border-zinc-800/70 pt-3">
+      {loading && (
+        <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+          <Loader2 size={13} className="animate-spin" />
+          <span>جارٍ تحميل التعليقات...</span>
+        </div>
+      )}
+
+      {error && <p className="text-[11px] text-red-400 mb-2">{error}</p>}
+
+      {!loading && comments && comments.length === 0 && (
+        <p className="text-[11px] text-zinc-500 mb-2">لا توجد تعليقات بعد، كن أول من يعلّق.</p>
+      )}
+
+      <div className="space-y-2.5 max-h-72 overflow-y-auto no-scrollbar w-full">
+        {(comments ?? []).map((item) => (
+          <div key={item.id} className="flex items-start gap-2 w-full min-w-0">
+            <Avatar profile={item.author} />
+            <div className="min-w-0 flex-1 rounded-xl bg-zinc-950/70 border border-zinc-800/70 px-2.5 py-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <Link href={`/profile/${item.user_id}`} className="text-[11px] font-bold text-white truncate">
+                  {displayName(item.author)}
+                </Link>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <time className="text-[9px] text-zinc-500">{formatDate(item.created_at)}</time>
+                  {item.user_id === currentUserId && (
+                    <button
+                      type="button"
+                      onClick={() => void remove(item.id)}
+                      className="text-zinc-600 hover:text-red-400 transition"
+                      title="حذف التعليق"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  )}
+                </div>
+              </div>
+              <p className="text-[11px] text-zinc-200 whitespace-pre-line break-words mt-0.5">{item.content}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <form className="flex gap-1.5 mt-2.5 w-full" onSubmit={submit}>
+        <input
+          className="bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-white w-full outline-none focus:border-zinc-600"
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          placeholder="اكتب تعليقاً..."
+          maxLength={2000}
+        />
+        <button
+          className="button-primary text-xs px-3 py-1.5 shrink-0 flex items-center gap-1"
+          type="submit"
+          disabled={sending || !text.trim()}
+        >
+          {sending ? <Loader2 size={13} className="animate-spin" /> : <SendHorizontal size={13} />}
+          نشر
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function PostCard({
+  post,
+  currentUserId,
+  profile,
+  onRefresh,
+}: {
+  post: Post;
+  currentUserId: string;
+  profile?: Profile | null;
+  onRefresh: () => void;
+}) {
+  const [showComments, setShowComments] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const interactions = usePostInteractions(post, currentUserId);
+  const liked = interactions.liked;
 
   const handleDeletePost = async () => {
     if (!supabaseConfigured) return;
-    if (confirm('هل أنت تأكد من رغبتك في حذف هذا المنشور؟')) {
-      await supabase.from('posts').delete().eq('id', post.id);
-      onRefresh();
+    if (!confirm('هل أنت متأكد من رغبتك في حذف هذا المنشور؟')) return;
+    setDeleting(true);
+    const { error } = await supabase.from('posts').delete().eq('id', post.id);
+    setDeleting(false);
+    if (error) {
+      toast.error('تعذر حذف المنشور');
+      return;
     }
+    toast.success('تم حذف المنشور');
+    onRefresh();
   };
 
   return (
@@ -857,8 +902,13 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
           </div>
         </div>
         {post.user_id === currentUserId && (
-          <button onClick={handleDeletePost} className="text-zinc-500 hover:text-red-400 p-1 transition shrink-0" title="حذف المنشور">
-            <Trash2 size={16} />
+          <button
+            onClick={handleDeletePost}
+            className="text-zinc-500 hover:text-red-400 p-1 transition shrink-0"
+            title="حذف المنشور"
+            disabled={deleting}
+          >
+            {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
           </button>
         )}
       </div>
@@ -874,47 +924,65 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
           ? <video className="media-post rounded-xl mt-2 max-h-96 w-full object-cover" src={post.media_url} controls playsInline preload="metadata" />
           : <img className="media-post rounded-xl mt-2 max-h-96 w-full object-cover" src={post.media_url} alt="" />)}
 
-        <div className="flex items-center justify-between text-xs text-zinc-400 border-t border-zinc-800/80 pt-2.5 mt-3 w-full shrink-0 flex-nowrap overflow-x-auto no-scrollbar">
-          <div className="flex items-center gap-4 shrink-0">
-            <button type="button" className={`flex items-center gap-1 hover:text-pink-500 transition shrink-0 ${liked ? 'text-pink-500 font-bold' : ''}`} onClick={() => void toggleLike()}>
-              <Heart size={18} fill={liked ? 'currentColor' : 'none'} />
-              <span>{post.likes?.length || 0}</span>
+        <div className="flex items-center justify-between text-xs text-zinc-400 border-t border-zinc-800/80 pt-2.5 mt-3 w-full shrink-0 flex-nowrap gap-1">
+          <div className="flex items-center gap-3.5 shrink-0">
+            <button
+              type="button"
+              aria-pressed={liked}
+              aria-label={liked ? 'إلغاء الإعجاب' : 'إعجاب'}
+              className={`flex items-center gap-1 transition shrink-0 active:scale-90 ${liked ? 'text-pink-500 font-bold' : 'hover:text-pink-500'}`}
+              onClick={() => void interactions.toggleLike()}
+            >
+              <Heart size={18} fill={liked ? 'currentColor' : 'none'} className={liked ? 'drop-shadow-[0_0_6px_rgba(236,72,153,0.65)]' : ''} />
+              <span>{formatCount(interactions.likes)}</span>
             </button>
 
-            <button type="button" className="flex items-center gap-1 hover:text-blue-400 transition shrink-0" onClick={() => comments === null ? void loadComments() : setComments(null)}>
+            <button
+              type="button"
+              aria-expanded={showComments}
+              aria-label="التعليقات"
+              className={`flex items-center gap-1 transition shrink-0 ${showComments ? 'text-blue-400' : 'hover:text-blue-400'}`}
+              onClick={() => setShowComments((open) => !open)}
+            >
               <MessageSquare size={17} />
-              <span>{post.comments?.length || 0}</span>
+              <span>{formatCount(interactions.comments)}</span>
             </button>
 
-            <button type="button" className={`flex items-center gap-1 hover:text-emerald-400 transition shrink-0 ${reposted ? 'text-emerald-400 font-bold' : ''}`} onClick={toggleRepost}>
+            <button
+              type="button"
+              aria-pressed={interactions.reposted}
+              aria-label="إعادة نشر"
+              className={`flex items-center gap-1 transition shrink-0 active:scale-90 ${interactions.reposted ? 'text-emerald-400 font-bold' : 'hover:text-emerald-400'}`}
+              onClick={() => void interactions.toggleRepost()}
+            >
               <Repeat size={17} />
-              <span>إعادة نشر</span>
+              <span>{formatCount(interactions.reposts)}</span>
             </button>
 
-            <button type="button" className="flex items-center gap-1 hover:text-purple-400 transition shrink-0" onClick={() => alert('تم نسخ رابط المنشور للمشاركة!')}>
+            <button
+              type="button"
+              aria-label="مشاركة"
+              className={`flex items-center gap-1 transition shrink-0 active:scale-90 ${interactions.shared ? 'text-purple-400' : 'hover:text-purple-400'}`}
+              onClick={() => void interactions.share()}
+            >
               <Share2 size={17} />
-              <span>مشاركة</span>
+              <span>{formatCount(interactions.shares)}</span>
             </button>
           </div>
 
-          <button type="button" className={`hover:text-amber-400 transition shrink-0 ${bookmarked ? 'text-amber-400' : ''}`} onClick={toggleBookmark}>
-            <Bookmark size={18} fill={bookmarked ? 'currentColor' : 'none'} />
+          <button
+            type="button"
+            aria-pressed={interactions.bookmarked}
+            aria-label={interactions.bookmarked ? 'إزالة من المحفوظات' : 'حفظ المنشور'}
+            className={`transition shrink-0 active:scale-90 ${interactions.bookmarked ? 'text-amber-400' : 'hover:text-amber-400'}`}
+            onClick={() => void interactions.toggleBookmark()}
+          >
+            <Bookmark size={18} fill={interactions.bookmarked ? 'currentColor' : 'none'} />
           </button>
         </div>
 
-        {comments && (
-          <div className="comments-list mt-3 border-t border-zinc-800/40 pt-2 w-full">
-            {busy && <p className="muted text-xs text-zinc-500">جاري تحميل التعليقات...</p>}
-            {comments.map(c => (
-              <p key={c.id} className="text-xs mb-1.5 text-zinc-300 break-words">
-                <b className="text-white ml-1">{displayName(normalizeProfile(c.author))}:</b> {c.content}
-              </p>
-            ))}
-            <form className="comment-form flex gap-1.5 mt-2 w-full" onSubmit={addComment}>
-              <input className="bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-white w-full outline-none" value={commentText} onChange={e => setCommentText(e.target.value)} placeholder="إضافة تعليق..." />
-              <button className="button-primary text-xs px-3 py-1 shrink-0" type="submit" disabled={busy || !commentText.trim()}>نشر</button>
-            </form>
-          </div>
+        {showComments && (
+          <CommentsPanel post={post} currentUserId={currentUserId} profile={profile} />
         )}
       </div>
     </article>
