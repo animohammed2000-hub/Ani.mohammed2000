@@ -1589,6 +1589,13 @@ function PostCard({
           </div>
         </div>
       )}
+
+      <ShareSheet
+        post={post}
+        currentUserId={currentUserId}
+        open={showShare}
+        onClose={() => setShowShare(false)}
+      />
     </article>
   );
 }
