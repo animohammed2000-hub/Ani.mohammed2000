@@ -1992,16 +1992,17 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
           if (uploadError) throw new Error(`فشل رفع الملف: ${uploadError.message}`);
 
           const publicData = supabase.storage.from(storageBucket).getPublicUrl(uploadedPath);
-          uploadedUrls.push(publicData.data.publicUrl);
+          const publicUrl = publicData?.data?.publicUrl;
+          if (publicUrl) uploadedUrls.push(publicUrl);
         }
         type = fileType === 'image' ? 'photo' : 'reel';
       }
 
       const { error: postError } = await supabase.from('posts').insert({
         user_id: userId,
-        content,
+        content: content || null,
         media_url: uploadedUrls[0] || null,
-        media_urls: uploadedUrls,
+        media_urls: uploadedUrls.length > 0 ? uploadedUrls : null,
         type,
       });
 
