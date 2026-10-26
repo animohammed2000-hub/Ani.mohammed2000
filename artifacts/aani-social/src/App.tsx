@@ -4,7 +4,7 @@ import {
   ArrowUpLeft, Bell, Bookmark, ChevronDown, ChevronUp, Clock, Film, Filter, Heart, Home, 
   ImagePlus, MessageCircle, MessageSquare, MoreVertical, Plus, Repeat, Search, Send, 
   Settings, Share2, Sparkles, Star, Trash2, UserRound, Video, X, Edit3, SendHorizontal,
-  Bot, Loader2, Code, Link2, Flag
+  Bot, Loader2, Code, Link2, Flag, Check, Copy, Mail
 } from 'lucide-react';
 
 import { Toaster, toast } from 'sonner';
@@ -12,11 +12,21 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { supabase, supabaseConfigured, storageBucket } from '@/lib/supabase';
 import { displayName, formatCount, formatDate, normalizeProfile, type Post, type Profile } from '@/lib/types';
 import {
+  copyPostLink,
   decoratePosts,
+  loadShareFriends,
+  postShareText,
+  recordShare,
+  sendPostToFriend,
+  sharePost,
+  sharePostToApp,
   useInteractionRealtime,
   usePostComments,
   usePostInteractions,
   useSavedPosts,
+  type ShareChannel,
+  type ShareFriend,
+  type ShareFriendRelation,
 } from '@/lib/interactions';
 import NotFound from '@/pages/not-found';
 import '@/index.css';
