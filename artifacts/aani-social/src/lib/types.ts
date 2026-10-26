@@ -21,10 +21,12 @@ export type Post = {
   likes_count?: number;
   comments_count?: number;
   reposts_count?: number;
+  shares_count?: number;
 
   liked_by_me?: boolean;
   saved_by_me?: boolean;
   reposted_by_me?: boolean;
+  shared_by_me?: boolean;
 
   likes?: { user_id: string }[];
   comments?: PostComment[];
