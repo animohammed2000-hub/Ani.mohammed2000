@@ -1118,7 +1118,10 @@ function PostCard({
 
       {post.reposted_at && (
         <div className="mb-2 flex items-center gap-1.5 text-[10px] font-medium text-emerald-400/90">
-          <Repeat size={12} /> أعاد {displayName(post.repost_attribution)} نشر هذا المنشور
+          <Repeat size={12} />
+          {post.repost_attribution
+            ? `أعاد ${displayName(post.repost_attribution)} نشر هذا المنشور`
+            : 'إعادة نشر'}
         </div>
       )}
 
