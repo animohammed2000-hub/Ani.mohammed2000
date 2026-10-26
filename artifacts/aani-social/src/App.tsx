@@ -16,6 +16,7 @@ import {
   useInteractionRealtime,
   usePostComments,
   usePostInteractions,
+  useSavedPosts,
 } from '@/lib/interactions';
 import NotFound from '@/pages/not-found';
 import '@/index.css';
@@ -1058,6 +1059,95 @@ function usePosts(
   return { posts, loading, refresh };
 }
 
+// --- صفحة المحفوظات ---
+function SavedPage({ userId, profile }: { userId: string; profile: Profile | null }) {
+  const { posts, loading, error, refresh } = useSavedPosts(userId);
+
+  return (
+    <section className="page feed-page px-4 pb-24 pt-4">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
+          <Bookmark size={16} className="text-amber-400" />
+          المحفوظات
+        </h2>
+        <button type="button" className="text-[11px] text-zinc-400 hover:text-white" onClick={() => void refresh()}>
+          تحديث
+        </button>
+      </div>
+
+      {loading && (
+        <div className="flex items-center justify-center py-12 text-zinc-500">
+          <Loader2 className="animate-spin" size={20} />
+        </div>
+      )}
+
+      {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
+
+      {!loading && posts.length === 0 && !error && (
+        <div className="empty-state text-center py-16 text-zinc-500">
+          <Bookmark size={36} className="mx-auto mb-2" />
+          <p className="text-xs">لا توجد منشورات محفوظة بعد. اضغط أيقونة الحفظ على أي منشور.</p>
+        </div>
+      )}
+
+      <div className="posts-list space-y-3">
+        {posts.map((post) => (
+          <PostCard
+            key={post.id}
+            post={post}
+            currentUserId={userId}
+            profile={profile}
+            onRefresh={() => void refresh()}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// --- صفحة منشور واحد (رابط المشاركة) ---
+function PostPage({
+  postId,
+  userId,
+  profile,
+}: {
+  postId: string;
+  userId: string;
+  profile: Profile | null;
+}) {
+  const { posts, loading, refresh } = usePosts('single', postId, userId);
+
+  return (
+    <section className="page px-4 pb-24 pt-4">
+      <Link href="/feed" className="inline-flex items-center gap-1 text-[11px] text-zinc-400 hover:text-white mb-3">
+        <ArrowUpLeft size={14} /> العودة إلى الرئيسية
+      </Link>
+
+      {loading && (
+        <div className="flex items-center justify-center py-12 text-zinc-500">
+          <Loader2 className="animate-spin" size={20} />
+        </div>
+      )}
+
+      {!loading && posts.length === 0 && (
+        <p className="text-xs text-zinc-500 text-center py-12">لم يتم العثور على هذا المنشور أو أنه غير متاح.</p>
+      )}
+
+      <div className="posts-list space-y-3">
+        {posts.map((post) => (
+          <PostCard
+            key={post.id}
+            post={post}
+            currentUserId={userId}
+            profile={profile}
+            onRefresh={() => void refresh()}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // --- الصفحة الرئيسية ---
 function FeedPage({ userId, profile }: { userId: string; profile: Profile | null }) {
   const { posts, loading, refresh } = usePosts('feed', undefined, userId);
@@ -1833,6 +1923,8 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
   const [showAssistantModal, setShowAssistantModal] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
 
+  useInteractionRealtime(userId);
+
   const [postText, setPostText] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileType, setFileType] = useState<'image' | 'video' | null>(null);
@@ -1939,6 +2031,13 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
         </div>
 
         <div className="flex items-center justify-end gap-2">
+          <Link
+            href="/saved"
+            title="المحفوظات"
+            className={`icon-button ${path.startsWith('/saved') ? 'text-amber-400' : 'text-zinc-300'}`}
+          >
+            <Bookmark size={20} fill={path.startsWith('/saved') ? 'currentColor' : 'none'} />
+          </Link>
           {path.startsWith('/profile') && (
             <button className="icon-button text-zinc-300" onClick={() => setShowSettingsModal(true)}>
               <Settings size={20} />
@@ -2080,6 +2179,8 @@ function App() {
               <Route path="/messages/:userId">{params => <MessagesPage currentUserId={user.id} selectedId={params.userId} />}</Route>
               <Route path="/profile">{() => <ProfilePage targetUserId={user.id} currentUserId={user.id} profile={profile} onProfileUpdate={setProfile} />}</Route>
               <Route path="/profile/:userId">{params => <ProfilePage key={params.userId} targetUserId={params.userId} currentUserId={user.id} profile={profile} onProfileUpdate={setProfile} />}</Route>
+              <Route path="/saved">{() => <SavedPage userId={user.id} profile={profile} />}</Route>
+              <Route path="/post/:postId">{params => <PostPage postId={params.postId} userId={user.id} profile={profile} />}</Route>
               <Route component={NotFound} />
             </Switch>
           </Shell>
