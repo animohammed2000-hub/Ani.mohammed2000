@@ -543,7 +543,11 @@ export async function hydratePosts(
 
   const ids = posts
     .map((post) => post.id)
-    .filter((id) => options.force || !directHydration.has(keyOf(id, userId)));
+    .filter((id) => {
+      if (options.force) return true;
+      const hydratedAt = directHydration.get(keyOf(id, userId));
+      return !hydratedAt || Date.now() - hydratedAt > HYDRATION_TTL_MS;
+    });
 
   ids.forEach((id) => directHydration.set(keyOf(id, userId), Date.now()));
 
