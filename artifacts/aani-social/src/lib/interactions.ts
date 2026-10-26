@@ -1229,10 +1229,13 @@ export function usePostInteractions(
     () => toggleBookmark(post, userId),
     [post, userId],
   );
-  const onRepost = useCallback(
-    () => toggleRepost(post, userId),
-    [post, userId],
-  );
+  const onRepost = useCallback(async () => {
+    await toggleRepost(post, userId);
+    // Let profile/feed views know they may need to merge/unmerge this repost.
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("aani:repost-changed"));
+    }
+  }, [post, userId]);
   const onShare = useCallback(() => sharePost(post, userId), [post, userId]);
 
   return {
