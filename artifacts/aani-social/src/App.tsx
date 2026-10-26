@@ -2242,6 +2242,13 @@ function ReelActions({
           </button>
         )}
       </div>
+
+      <ShareSheet
+        post={post}
+        currentUserId={userId}
+        open={showShare}
+        onClose={() => setShowShare(false)}
+      />
     </>
   );
 }
