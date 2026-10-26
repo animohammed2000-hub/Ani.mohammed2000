@@ -400,16 +400,16 @@ async function fetchFallbackSummaries(
     counters.set(String(row.id), row);
   });
 
+  const likeRows = (likes.data ?? []) as RawRow[];
+  const bookmarkRows = (bookmarks.data ?? []) as RawRow[];
+  const repostRows = (reposts.data ?? []) as RawRow[];
+  const shareRows = (shares.data ?? []) as RawRow[];
+
   postIds.forEach((postId) => {
     const summary = summaries.get(postId) ?? { postId };
     const row = counters.get(postId);
-    const likesFor = (likes.data ?? []) as RawRow[];
-    const commentsFor = (comments.data ?? []) as RawRow[];
 
-    summary.likes = toNumber(
-      row?.likes_count,
-      likeCounts.get(postId) ?? likesFor.length === 0 ? 0 : likeCounts.get(postId) ?? 0,
-    );
+    summary.likes = toNumber(row?.likes_count, likeCounts.get(postId) ?? 0);
     summary.comments = toNumber(
       row?.comments_count,
       commentCounts.get(postId) ?? 0,
