@@ -60,6 +60,17 @@ export const normalizeProfile = (
   return row as Profile;
 };
 
+export const formatCount = (value?: number | null): string => {
+  const count = typeof value === "number" && Number.isFinite(value) ? value : 0;
+  if (count < 1000) return String(count);
+  if (count < 1_000_000) {
+    const thousands = count / 1000;
+    return `${thousands >= 10 ? Math.round(thousands) : thousands.toFixed(1).replace(/\.0$/, "")} ألف`;
+  }
+  const millions = count / 1_000_000;
+  return `${millions >= 10 ? Math.round(millions) : millions.toFixed(1).replace(/\.0$/, "")} مليون`;
+};
+
 export const formatDate = (value: string): string => {
   const date = new Date(value);
 
