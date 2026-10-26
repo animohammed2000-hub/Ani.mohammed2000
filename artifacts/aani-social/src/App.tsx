@@ -1145,6 +1145,7 @@ function PostCard({
   onRefresh: () => void;
 }) {
   const [showComments, setShowComments] = useState(false);
+  const [showShare, setShowShare] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const interactions = usePostInteractions(post, currentUserId);
   const liked = interactions.liked;
