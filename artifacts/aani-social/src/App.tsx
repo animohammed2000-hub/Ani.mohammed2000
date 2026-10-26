@@ -1363,10 +1363,13 @@ function usePosts(
       const { data, error } = await request;
       if (error) throw error;
 
-      const decorated = await decoratePosts(
-        (data ?? []) as Record<string, any>[],
-        currentUserId ?? '',
-      );
+      let rows = (data ?? []) as Record<string, any>[];
+
+      if (query === 'profile' && targetUserId) {
+        rows = await mergeProfileReposts(rows, targetUserId);
+      }
+
+      const decorated = await decoratePosts(rows, currentUserId ?? '');
       setPosts(decorated);
     } catch {
       setPosts([]);
