@@ -1009,8 +1009,18 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
       <footer className="border-t border-zinc-800/80 pt-2.5 mt-3">
         <div className="post-actions-right flex items-center gap-4 justify-start w-full">
           {/* 1. الإعجاب */}
-          <button type="button" className={`post-action-btn flex items-center gap-1.5 ${liked ? 'liked text-pink-500 font-bold' : 'text-zinc-400'}`} onClick={toggleLike}>
-            <Heart size={18} fill={liked ? 'currentColor' : 'none'} />
+          <button
+            type="button"
+            className={`post-action-btn flex items-center gap-1.5 ${liked ? 'like-active text-rose-500 font-bold' : 'text-zinc-400'}`}
+            onClick={toggleLike}
+            aria-pressed={liked}
+            aria-label={liked ? 'إلغاء الإعجاب' : 'إعجاب'}
+          >
+            <Heart
+              size={18}
+              fill={liked ? 'currentColor' : 'none'}
+              className={`transition-transform ${isAnimating ? 'animate-heart-pulse' : ''}`}
+            />
             <span className="text-xs">{likesCount}</span>
           </button>
 
