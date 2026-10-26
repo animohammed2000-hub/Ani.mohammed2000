@@ -990,98 +990,57 @@ function PostCard({
 }
 
 // --- Hook الجلب الموحد للمنشورات والريلز ---
-function usePosts(query: 'feed' | 'reel' | 'profile', targetUserId?: string) {
+function usePosts(
+  query: 'feed' | 'reel' | 'profile' | 'single',
+  targetUserId?: string,
+  currentUserId?: string,
+) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    if (!supabaseConfigured) { setPosts([]); setLoading(false); return; }
+    if (!supabaseConfigured) {
+      setPosts([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
+      let request = supabase.from('posts').select('*');
+
       if (query === 'feed') {
-        const { data: rawPosts, error: postsErr } = await supabase
-          .from('posts')
-          .select('id, user_id, content, media_url, type, created_at')
+        request = request
           .in('type', ['text', 'photo'])
           .order('created_at', { ascending: false })
           .limit(50);
-
-        if (postsErr) throw postsErr;
-
-        if (rawPosts && rawPosts.length > 0) {
-          const uIds = [...new Set(rawPosts.map(p => p.user_id))];
-          const { data: profs } = await supabase.from('profiles').select('id, username, full_name, avatar_url').in('id', uIds);
-          const profMap = new Map((profs || []).map(p => [p.id, p]));
-
-          const formatted = rawPosts.map(p => ({
-            ...p,
-            author: profMap.get(p.user_id) || { id: p.user_id, username: 'user', full_name: 'مستخدم آني' },
-            likes: [],
-            comments: []
-          }));
-          setPosts(formatted as unknown as Post[]);
-        } else {
-          setPosts([]);
-        }
-      } else if (query === 'profile' && targetUserId) {
-        const { data: rawPosts, error: postsErr } = await supabase
-          .from('posts')
-          .select('id, user_id, content, media_url, type, created_at')
-          .eq('user_id', targetUserId)
-          .order('created_at', { ascending: false });
-
-        if (postsErr) throw postsErr;
-
-        if (rawPosts && rawPosts.length > 0) {
-          const { data: profData } = await supabase
-            .from('profiles')
-            .select('id, username, full_name, avatar_url')
-            .eq('id', targetUserId)
-            .maybeSingle();
-
-          const formattedPosts = rawPosts.map(p => ({
-            ...p,
-            author: profData || { id: targetUserId, username: 'user', full_name: 'مستخدم' },
-            likes: [],
-            comments: []
-          }));
-
-          setPosts(formattedPosts as unknown as Post[]);
-        } else {
-          setPosts([]);
-        }
       } else if (query === 'reel') {
-        const { data: rawPosts, error: postsErr } = await supabase
-          .from('posts')
-          .select('id, user_id, content, media_url, type, created_at')
+        request = request
           .eq('type', 'reel')
           .order('created_at', { ascending: false })
           .limit(50);
-
-        if (postsErr) throw postsErr;
-
-        if (rawPosts && rawPosts.length > 0) {
-          const uIds = [...new Set(rawPosts.map(p => p.user_id))];
-          const { data: profs } = await supabase.from('profiles').select('id, username, full_name, avatar_url').in('id', uIds);
-          const profMap = new Map((profs || []).map(p => [p.id, p]));
-
-          const formatted = rawPosts.map(p => ({
-            ...p,
-            author: profMap.get(p.user_id) || { id: p.user_id, username: 'user', full_name: 'مستخدم آني' },
-            likes: [],
-            comments: []
-          }));
-          setPosts(formatted as unknown as Post[]);
-        } else {
-          setPosts([]);
-        }
+      } else if (query === 'profile' && targetUserId) {
+        request = request
+          .eq('user_id', targetUserId)
+          .order('created_at', { ascending: false });
+      } else if (query === 'single' && targetUserId) {
+        request = request.eq('id', targetUserId).limit(1);
       }
+
+      const { data, error } = await request;
+      if (error) throw error;
+
+      const decorated = await decoratePosts(
+        (data ?? []) as Record<string, any>[],
+        currentUserId ?? '',
+      );
+      setPosts(decorated);
     } catch {
       setPosts([]);
     } finally {
       setLoading(false);
     }
-  }, [query, targetUserId]);
+  }, [query, targetUserId, currentUserId]);
 
   useEffect(() => {
     void refresh();
