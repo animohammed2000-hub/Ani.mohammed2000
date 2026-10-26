@@ -1194,6 +1194,130 @@ function PostCard({
           <CommentsPanel post={post} currentUserId={currentUserId} profile={profile} />
         )}
       </div>
+
+      {showEdit && (
+        <div className="modal-overlay" onClick={() => !savingEdit && setShowEdit(false)}>
+          <div
+            className="modal-content max-w-sm w-full bg-zinc-900 border border-zinc-800 p-4 rounded-2xl space-y-3"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
+              <h3 className="font-bold text-white text-sm flex items-center gap-1">
+                <Edit3 size={16} className="text-pink-500" /> تعديل المنشور
+              </h3>
+              <button type="button" onClick={() => setShowEdit(false)} aria-label="إغلاق">
+                <X size={18} className="text-zinc-400" />
+              </button>
+            </div>
+
+            <textarea
+              value={editContent}
+              onChange={(event) => setEditContent(event.target.value)}
+              rows={4}
+              className="w-full bg-zinc-950 border border-zinc-800 p-2.5 rounded-xl text-xs text-white outline-none resize-none"
+              placeholder="اكتب شيئاً..."
+            />
+
+            <label className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 p-2.5 rounded-xl cursor-pointer hover:bg-zinc-800 text-xs text-zinc-300">
+              <ImagePlus size={16} className="text-purple-400" />
+              <span className="truncate">{editFile ? editFile.name : 'استبدال الصورة الحالية (اختياري)'}</span>
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(event) => setEditFile(event.target.files?.[0] ?? null)}
+              />
+            </label>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setShowEdit(false)}
+                className="text-xs px-3 py-1.5 rounded-lg text-zinc-300 hover:bg-zinc-800"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                disabled={savingEdit}
+                onClick={() => void handleSaveEdit()}
+                className="button-primary text-xs px-4"
+              >
+                {savingEdit ? 'جاري الحفظ...' : 'حفظ التغييرات'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showReport && (
+        <div className="modal-overlay" onClick={() => !reporting && setShowReport(false)}>
+          <div
+            className="modal-content max-w-sm w-full bg-zinc-900 border border-zinc-800 p-4 rounded-2xl space-y-3"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
+              <h3 className="font-bold text-white text-sm flex items-center gap-1">
+                <Flag size={16} className="text-amber-400" /> إبلاغ عن المنشور
+              </h3>
+              <button type="button" onClick={() => setShowReport(false)} aria-label="إغلاق">
+                <X size={18} className="text-zinc-400" />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              {['محتوى غير مناسب', 'خطاب كراهية أو تحريض', 'انتحال شخصية', 'معلومات مضللة', 'رسائل مزعجة'].map(
+                (option) => (
+                  <label
+                    key={option}
+                    className={`flex items-center gap-2 rounded-xl border p-2 text-[11px] cursor-pointer transition ${
+                      reportReason === option
+                        ? 'border-amber-400/60 bg-amber-400/10 text-amber-200'
+                        : 'border-zinc-800 bg-zinc-950 text-zinc-300 hover:bg-zinc-800'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name={`report-${post.id}`}
+                      value={option}
+                      checked={reportReason === option}
+                      onChange={() => setReportReason(option)}
+                      className="accent-amber-400"
+                    />
+                    {option}
+                  </label>
+                ),
+              )}
+            </div>
+
+            <textarea
+              value={reportDetails}
+              onChange={(event) => setReportDetails(event.target.value)}
+              rows={2}
+              className="w-full bg-zinc-950 border border-zinc-800 p-2.5 rounded-xl text-xs text-white outline-none resize-none"
+              placeholder="تفاصيل إضافية (اختياري)"
+            />
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setShowReport(false)}
+                className="text-xs px-3 py-1.5 rounded-lg text-zinc-300 hover:bg-zinc-800"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                disabled={reporting}
+                onClick={() => void submitReport()}
+                className="text-xs px-4 py-1.5 rounded-lg bg-amber-500 text-black font-bold hover:bg-amber-400 disabled:opacity-60"
+              >
+                {reporting ? 'جاري الإرسال...' : 'إرسال البلاغ'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </article>
   );
 }
