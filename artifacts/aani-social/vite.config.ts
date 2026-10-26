@@ -15,7 +15,7 @@ const PUBLIC_ENV_KEYS = [
   'VITE_SUPABASE_STORAGE_BUCKET',
 ] as const;
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(async ({ mode }) => {
   // Precedence: real process env (hosting platform / Docker ARG) > app .env > root .env.
   // Values found in files are pushed into process.env so Vite's own env loader
   // picks them up for import.meta.env.
