@@ -2164,10 +2164,39 @@ function App() {
   useEffect(() => {
     document.documentElement.lang = 'ar';
     document.documentElement.dir = 'rtl';
-    if (!supabaseConfigured) { setAuthLoading(false); return; }
-    void supabase.auth.getSession().then(({ data }) => { setSession(data.session); setAuthLoading(false); });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, next) => { setSession(next); setProfile(null); });
-    return () => subscription.unsubscribe();
+
+    if (!supabaseConfigured) {
+      setAuthLoading(false);
+      return;
+    }
+
+    let mounted = true;
+
+    const loadSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        if (mounted) setSession(data.session);
+      } catch (error) {
+        console.error('تعذر استعادة جلسة المستخدم:', error);
+        if (mounted) setSession(null);
+      } finally {
+        if (mounted) setAuthLoading(false);
+      }
+    };
+
+    void loadSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!mounted) return;
+      setSession(nextSession);
+      setProfile(null);
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
