@@ -2161,6 +2161,7 @@ function ReelActions({
 }) {
   const interactions = usePostInteractions(post, userId);
   const [showComments, setShowComments] = useState(false);
+  const [showShare, setShowShare] = useState(false);
 
   return (
     <>
