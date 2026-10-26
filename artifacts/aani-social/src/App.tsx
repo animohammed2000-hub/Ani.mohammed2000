@@ -866,6 +866,263 @@ function CommentsPanel({
   );
 }
 
+// --- نافذة المشاركة: إرسال المنشور إلى صديق أو عبر التطبيقات ---
+const SHARE_RELATION_LABEL: Record<ShareFriendRelation, string> = {
+  friend: 'صديق',
+  following: 'تتابعه',
+  follower: 'يتابعك',
+  suggested: 'على آني',
+};
+
+function ShareSheet({
+  post,
+  currentUserId,
+  open,
+  onClose,
+}: {
+  post: Post;
+  currentUserId: string;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [friends, setFriends] = useState<ShareFriend[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [query, setQuery] = useState('');
+  const [note, setNote] = useState('');
+  const [sendingTo, setSendingTo] = useState<string | null>(null);
+  const [sentTo, setSentTo] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (!open) return;
+    setSentTo({});
+    setNote('');
+    setQuery('');
+    let cancelled = false;
+    setLoading(true);
+    void loadShareFriends(currentUserId)
+      .then((rows) => {
+        if (!cancelled) setFriends(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setFriends([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, currentUserId]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const visibleFriends = query.trim()
+    ? friends.filter((friend) =>
+        `${friend.name} ${friend.username}`.toLowerCase().includes(query.trim().toLowerCase()),
+      )
+    : friends;
+
+  const handleSend = async (friend: ShareFriend) => {
+    if (sendingTo) return;
+    setSendingTo(friend.id);
+    const result = await sendPostToFriend(post, currentUserId, friend.id, note);
+    setSendingTo(null);
+    if (result.ok) {
+      setSentTo((previous) => ({ ...previous, [friend.id]: true }));
+      toast.success(`تم إرسال المنشور إلى ${friend.name}`);
+    } else {
+      toast.error(result.message);
+    }
+  };
+
+  const handleChannel = (channel: ShareChannel) => {
+    sharePostToApp(channel, post);
+    void recordShare(post, currentUserId);
+    onClose();
+  };
+
+  const handleCopy = async () => {
+    const copied = await copyPostLink(post, currentUserId);
+    if (copied) onClose();
+  };
+
+  const handleNativeShare = async () => {
+    await sharePost(post, currentUserId);
+    onClose();
+  };
+
+  const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+
+  const channels: Array<{ id: ShareChannel; label: string; node: ReactNode; className: string }> = [
+    { id: 'whatsapp', label: 'واتساب', node: <MessageCircle size={20} />, className: 'text-emerald-400 bg-emerald-500/10' },
+    { id: 'telegram', label: 'تيليجرام', node: <Send size={20} />, className: 'text-sky-400 bg-sky-500/10' },
+    { id: 'x', label: 'X', node: <span className="text-[17px] font-black">X</span>, className: 'text-zinc-100 bg-zinc-700/40' },
+    { id: 'facebook', label: 'فيسبوك', node: <span className="text-[19px] font-black">f</span>, className: 'text-blue-400 bg-blue-500/10' },
+    { id: 'email', label: 'بريد', node: <Mail size={20} />, className: 'text-amber-400 bg-amber-500/10' },
+    { id: 'sms', label: 'رسالة', node: <MessageSquare size={20} />, className: 'text-lime-400 bg-lime-500/10' },
+  ];
+
+  return (
+    <div
+      className="modal-overlay fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="مشاركة المنشور"
+    >
+      <div
+        className="w-full sm:max-w-md max-h-[88vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl border border-zinc-800 bg-zinc-950 p-4 text-white shadow-2xl"
+        dir="rtl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-zinc-800 pb-2 mb-3">
+          <h3 className="text-sm font-bold flex items-center gap-1.5">
+            <Share2 size={16} className="text-purple-400" /> مشاركة المنشور
+          </h3>
+          <button type="button" onClick={onClose} aria-label="إغلاق" className="text-zinc-400 hover:text-white">
+            <X size={18} />
+          </button>
+        </div>
+
+        <p className="text-[11px] text-zinc-400 mb-2 leading-relaxed">
+          {postShareText(post)}
+        </p>
+
+        <textarea
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          maxLength={200}
+          rows={2}
+          placeholder="أضف رسالة مع المنشور (اختياري)"
+          className="w-full resize-none rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] text-zinc-100 placeholder:text-zinc-500 focus:border-purple-500 focus:outline-none"
+        />
+
+        {/* إرسال إلى شخص */}
+        <div className="mt-4">
+          <div className="flex items-center justify-between mb-2">
+            <strong className="text-[11px] text-zinc-300">إرسال إلى</strong>
+            {friends.length > 3 && (
+              <div className="relative">
+                <Search size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500" />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="ابحث عن شخص"
+                  className="w-32 rounded-lg border border-zinc-800 bg-zinc-900 py-1 pr-6 pl-2 text-[10px] focus:border-purple-500 focus:outline-none"
+                />
+              </div>
+            )}
+          </div>
+
+          {loading && (
+            <div className="flex items-center justify-center py-6 text-zinc-500">
+              <Loader2 size={18} className="animate-spin" />
+            </div>
+          )}
+
+          {!loading && visibleFriends.length === 0 && (
+            <p className="rounded-xl border border-dashed border-zinc-800 px-3 py-3 text-[11px] text-zinc-500">
+              {query.trim()
+                ? 'لا يوجد شخص بهذا الاسم.'
+                : 'لا يوجد مستخدمون آخرون بعد. يمكنك مشاركة الرابط عبر التطبيقات أدناه.'}
+            </p>
+          )}
+
+          {!loading && visibleFriends.length > 0 && (
+            <div className="max-h-52 space-y-1 overflow-y-auto pr-0.5">
+              {visibleFriends.map((friend) => {
+                const sent = sentTo[friend.id];
+                return (
+                  <div key={friend.id} className="flex items-center justify-between gap-2 rounded-xl px-1.5 py-1.5 hover:bg-zinc-900">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Avatar profile={{ full_name: friend.name, username: friend.username, avatar_url: friend.avatar_url }} />
+                      <div className="min-w-0">
+                        <strong className="block truncate text-[11px] text-white">{friend.name}</strong>
+                        <span className="block truncate text-[10px] text-zinc-500">
+                          @{friend.username} · {SHARE_RELATION_LABEL[friend.relation]}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleSend(friend)}
+                      disabled={sendingTo === friend.id || sent}
+                      className={`shrink-0 rounded-full px-3 py-1 text-[10px] font-bold transition active:scale-95 ${
+                        sent
+                          ? 'bg-emerald-500/15 text-emerald-400'
+                          : 'bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-60'
+                      }`}
+                    >
+                      {sendingTo === friend.id ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : sent ? (
+                        <span className="flex items-center gap-1"><Check size={12} /> تم</span>
+                      ) : (
+                        'إرسال'
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* مشاركة عبر التطبيقات */}
+        <div className="mt-4 border-t border-zinc-800 pt-3">
+          <strong className="text-[11px] text-zinc-300 mb-2 block">مشاركة عبر</strong>
+          <div className="grid grid-cols-4 gap-2">
+            {channels.map((channel) => (
+              <button
+                key={channel.id}
+                type="button"
+                onClick={() => handleChannel(channel.id)}
+                className="flex flex-col items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-900/60 px-1 py-2 text-[10px] text-zinc-300 transition hover:border-zinc-700 active:scale-95"
+              >
+                <span className={`flex h-8 w-8 items-center justify-center rounded-full ${channel.className}`}>
+                  {channel.node}
+                </span>
+                {channel.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => void handleCopy()}
+              className="flex flex-col items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-900/60 px-1 py-2 text-[10px] text-zinc-300 transition hover:border-zinc-700 active:scale-95"
+            >
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-500/10 text-purple-400">
+                <Copy size={18} />
+              </span>
+              نسخ الرابط
+            </button>
+            {canNativeShare && (
+              <button
+                type="button"
+                onClick={() => void handleNativeShare()}
+                className="flex flex-col items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-900/60 px-1 py-2 text-[10px] text-zinc-300 transition hover:border-zinc-700 active:scale-95"
+              >
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-700/40 text-zinc-100">
+                  <Share2 size={18} />
+                </span>
+                المزيد
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PostCard({
   post,
   currentUserId,
