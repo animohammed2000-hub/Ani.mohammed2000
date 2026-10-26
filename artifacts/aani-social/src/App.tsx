@@ -1011,7 +1011,7 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
           {/* 1. الإعجاب */}
           <button
             type="button"
-            className={`post-action-btn flex items-center gap-1.5 ${liked ? 'like-active text-rose-500 font-bold' : 'text-zinc-400'}`}
+            className={`post-action-btn flex items-center gap-1.5 ${liked ? 'liked text-rose-500 font-bold' : 'text-zinc-400'}`}
             onClick={toggleLike}
             aria-pressed={liked}
             aria-label={liked ? 'إلغاء الإعجاب' : 'إعجاب'}
