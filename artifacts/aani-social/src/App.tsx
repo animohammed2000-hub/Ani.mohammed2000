@@ -856,16 +856,21 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
   const toggleLike = async () => {
     const prevLiked = liked;
     const prevCount = likesCount;
+    const nextLiked = !prevLiked;
 
-    setLiked(!prevLiked);
-    setLikesCount(prevLiked ? prevCount - 1 : prevCount + 1);
+    setLiked(nextLiked);
+    setLikesCount(prevCount + (nextLiked ? 1 : -1));
+    setIsAnimating(true);
+    setTimeout(() => setIsAnimating(false), 450);
 
     if (!supabaseConfigured) return;
     try {
       if (prevLiked) {
-        await supabase.from('likes').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+        const { error } = await supabase.from('likes').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+        if (error) throw error;
       } else {
-        await supabase.from('likes').insert({ post_id: post.id, user_id: currentUserId });
+        const { error } = await supabase.from('likes').insert({ post_id: post.id, user_id: currentUserId });
+        if (error) throw error;
       }
     } catch {
       setLiked(prevLiked);
