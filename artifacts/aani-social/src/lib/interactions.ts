@@ -608,12 +608,18 @@ export async function decoratePosts(
     new Set(rows.map((row) => String(row.user_id ?? "")).filter(Boolean)),
   );
 
+  const reposterIds = Array.from(
+    new Set(rows.map((row) => String(row.reposter_id ?? "")).filter(Boolean)),
+  );
+
+  const profileIds = Array.from(new Set([...authorIds, ...reposterIds]));
+
   let profiles: Profile[] = [];
-  if (supabaseConfigured && authorIds.length > 0) {
+  if (supabaseConfigured && profileIds.length > 0) {
     const { data } = await supabase
       .from("profiles")
       .select("id,username,full_name,display_name,avatar_url,bio")
-      .in("id", authorIds);
+      .in("id", profileIds);
     profiles = (data ?? []) as Profile[];
   }
   const byId = new Map(profiles.map((profile) => [profile.id, profile]));
@@ -631,6 +637,10 @@ export async function decoratePosts(
     comments_count: optionalNumber(row.comments_count),
     reposts_count: optionalNumber(row.reposts_count),
     shares_count: optionalNumber(row.shares_count),
+    reposted_at: (row.reposted_at as string | null) ?? null,
+    repost_attribution: row.reposter_id
+      ? (byId.get(String(row.reposter_id)) ?? null)
+      : null,
   }));
 
   await hydratePosts(posts, userId);
