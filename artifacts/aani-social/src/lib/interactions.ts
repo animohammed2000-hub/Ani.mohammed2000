@@ -1207,7 +1207,9 @@ export function usePostInteractions(
     if (!cache.has(key)) {
       patchCache(post.id, userId, snapshotFromPost(post, userId));
     }
-    void hydratePosts([post], userId, { force: true });
+    // Cheap by default: hydratePosts skips posts that were already fetched
+    // moments ago, so a 50-card feed does not fire 50 extra requests.
+    void hydratePosts([post], userId);
   }, [key, post, userId]);
 
   const state = snapshot ?? snapshotFromPost(post, userId);
