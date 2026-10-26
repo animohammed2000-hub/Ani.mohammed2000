@@ -894,20 +894,27 @@ export async function sharePost(post: Post, userId: string): Promise<void> {
   }
 
   const before = readInteractionState(post, userId);
-  patchCache(post.id, userId, { shared: true, shares: before.shares + 1 });
+  const shares = before.shares + (before.shared ? 0 : 1);
+  patchCache(post.id, userId, { shared: true, shares });
+  writeLocalFlag(userId, post.id, { shared: true, shares });
 
+  let persisted = false;
   if (supabaseConfigured && userId) {
     try {
       const { error } = await supabase
         .from("post_shares")
         .insert({ post_id: post.id, user_id: userId });
-      if (error && isMissingRelation(error)) {
-        writeLocalFlag(userId, post.id, { shared: true });
+      // 23505 => this user already shared this post before: the counter is
+      // already counted, so we simply keep the flag.
+      persisted = !error || error.code === "23505" || isMissingRelation(error);
+      if (error && !persisted) {
+        patchCache(post.id, userId, { shares: before.shares });
       }
     } catch {
-      writeLocalFlag(userId, post.id, { shared: true });
+      persisted = false;
+      patchCache(post.id, userId, { shares: before.shares });
     }
-    void hydratePostIds([post.id], userId, { force: true });
+    if (persisted) void hydratePostIds([post.id], userId, { force: true });
   }
 
   toast.success(
@@ -915,6 +922,9 @@ export async function sharePost(post: Post, userId: string): Promise<void> {
       ? "تم نسخ رابط المنشور إلى الحافظة"
       : "تمت مشاركة المنشور",
   );
+  if (!persisted && !supabaseConfigured) {
+    toast.info("تم احتساب المشاركة على هذا الجهاز فقط");
+  }
 }
 
 export async function createComment(
