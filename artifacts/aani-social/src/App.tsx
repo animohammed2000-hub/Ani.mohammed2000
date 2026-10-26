@@ -2082,14 +2082,14 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
               rows={3} 
             />
 
-            {selectedFiles.length > 0 && (
+            {filePreviews.length > 0 && (
               <div className="flex gap-2 overflow-x-auto py-2 no-scrollbar">
-                {selectedFiles.map((file, i) => (
-                  <div key={i} className="relative w-20 h-20 rounded-xl overflow-hidden border border-zinc-800 shrink-0 bg-black">
+                {filePreviews.map((preview, i) => (
+                  <div key={preview.url} className="relative w-20 h-20 rounded-xl overflow-hidden border border-zinc-800 shrink-0 bg-black">
                     {fileType === 'image' ? (
-                      <img src={URL.createObjectURL(file)} alt="" className="w-full h-full object-cover" />
+                      <img src={preview.url} alt="" className="w-full h-full object-cover" />
                     ) : (
-                      <video src={URL.createObjectURL(file)} className="w-full h-full object-cover" />
+                      <video src={preview.url} className="w-full h-full object-cover" />
                     )}
                     <button type="button" onClick={() => setSelectedFiles(files => files.filter((_, idx) => idx !== i))} className="absolute top-1 right-1 bg-black/70 text-white rounded-full p-0.5">
                       <X size={12} />
