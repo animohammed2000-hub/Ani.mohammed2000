@@ -1448,7 +1448,11 @@ function usePosts(
     void refresh();
     const onPostCreated = () => void refresh();
     window.addEventListener('aani:post-created', onPostCreated);
-    return () => window.removeEventListener('aani:post-created', onPostCreated);
+    window.addEventListener('aani:repost-changed', onPostCreated);
+    return () => {
+      window.removeEventListener('aani:post-created', onPostCreated);
+      window.removeEventListener('aani:repost-changed', onPostCreated);
+    };
   }, [refresh]);
 
   return { posts, loading, refresh };
