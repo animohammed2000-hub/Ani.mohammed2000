@@ -673,21 +673,20 @@ async function notifyUser(
 }
 
 export async function toggleLike(post: Post, userId: string): Promise<void> {
-  if (!supabaseConfigured) {
-    toast.error("قاعدة البيانات غير مهيأة، تعذر حفظ الإعجاب");
-    return;
-  }
   if (isPending(post.id, userId)) return;
 
   const before = readInteractionState(post, userId);
   const liked = !before.liked;
+  const likes = Math.max(0, before.likes + (liked ? 1 : -1));
   markPending(post.id, userId, 1);
-  patchCache(post.id, userId, {
-    liked,
-    likes: Math.max(0, before.likes + (liked ? 1 : -1)),
-  });
+  patchCache(post.id, userId, { liked, likes });
 
-  let ok = false;
+  if (!supabaseConfigured) {
+    writeLocalFlag(userId, post.id, { liked, likes });
+    markPending(post.id, userId, -1);
+    return;
+  }
+
   try {
     const { error } = liked
       ? await supabase
@@ -704,10 +703,15 @@ export async function toggleLike(post: Post, userId: string): Promise<void> {
         liked: before.liked,
         likes: before.likes,
       });
+      writeLocalFlag(userId, post.id, {
+        liked: before.liked,
+        likes: before.likes,
+      });
       toast.error("تعذر حفظ الإعجاب، تحقق من الاتصال وحاول مجدداً");
       return;
     }
-    ok = true;
+
+    writeLocalFlag(userId, post.id, { liked, likes });
     if (liked) {
       void notifyUser(post.user_id, userId, "like", post.id, "أعجب بمنشورك");
     }
@@ -719,7 +723,7 @@ export async function toggleLike(post: Post, userId: string): Promise<void> {
     markPending(post.id, userId, -1);
   }
 
-  if (ok) await hydratePostIds([post.id], userId, { force: true });
+  await hydratePostIds([post.id], userId, { force: true });
 }
 
 export async function toggleBookmark(
