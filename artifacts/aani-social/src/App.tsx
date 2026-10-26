@@ -1443,7 +1443,7 @@ function PostCard({
               type="button"
               aria-label="مشاركة"
               className={`flex items-center gap-1 transition shrink-0 active:scale-90 ${interactions.shared ? 'text-purple-400' : 'hover:text-purple-400'}`}
-              onClick={() => void interactions.share()}
+              onClick={() => setShowShare(true)}
             >
               <Share2 size={17} />
               <span>{formatCount(interactions.shares)}</span>
