@@ -884,60 +884,275 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
+export function postShareUrl(postId: string): string {
+  return buildPostUrl(postId);
+}
+
+/** Short text used as the message body when sharing a post. */
+export function postShareText(post: Post): string {
+  const excerpt = (post.content ?? "").trim().replace(/\s+/g, " ");
+  if (!excerpt) return `منشور ${displayName(post.author)} على آني`;
+  return excerpt.length > 140 ? `${excerpt.slice(0, 139)}…` : excerpt;
+}
+
+/**
+ * Records that `userId` shared `post` — exactly once per user.
+ *
+ * Writes a row into `public.post_shares` (unique per post+user). The database
+ * trigger bumps `posts.shares_count`, and the row is what makes the purple
+ * "shared" state survive a refresh. Returns true when it was persisted.
+ */
+export async function recordShare(post: Post, userId: string): Promise<boolean> {
+  const before = readInteractionState(post, userId);
+
+  if (before.shared) {
+    patchCache(post.id, userId, { shared: true });
+    return true;
+  }
+
+  const shares = before.shares + 1;
+  patchCache(post.id, userId, { shared: true, shares });
+  writeLocalFlag(userId, post.id, { shared: true, shares });
+
+  if (!supabaseConfigured || !userId) return false;
+
+  try {
+    const { error } = await supabase
+      .from("post_shares")
+      .insert({ post_id: post.id, user_id: userId });
+    // 23505 => already counted for this user, keep the flag.
+    const persisted = !error || error.code === "23505" || isMissingRelation(error);
+    if (persisted) {
+      void hydratePostIds([post.id], userId, { force: true });
+    } else {
+      patchCache(post.id, userId, { shares: before.shares });
+    }
+    return persisted;
+  } catch {
+    patchCache(post.id, userId, { shares: before.shares });
+    return false;
+  }
+}
+
+export type ShareFriendRelation = "friend" | "following" | "follower" | "suggested";
+
+export type ShareFriend = {
+  id: string;
+  name: string;
+  username: string;
+  avatar_url: string | null;
+  relation: ShareFriendRelation;
+};
+
+/**
+ * People the current user can send a post to.
+ *
+ * Real relationships from `public.follows`: mutual follows are friends, then
+ * people you follow, then people who follow you. If the user has no follow
+ * relationships yet we list other members so the feature is still usable
+ * (clearly labelled as "على آني" rather than pretending they are friends).
+ */
+export async function loadShareFriends(userId: string): Promise<ShareFriend[]> {
+  if (!supabaseConfigured || !userId) return [];
+
+  const [followingRes, followersRes] = await Promise.all([
+    supabase.from("follows").select("following_id").eq("follower_id", userId),
+    supabase.from("follows").select("follower_id").eq("following_id", userId),
+  ]);
+
+  const following = new Set<string>(
+    ((followingRes.data ?? []) as RawRow[]).map((row) => String(row.following_id)),
+  );
+  const followers = new Set<string>(
+    ((followersRes.data ?? []) as RawRow[]).map((row) => String(row.follower_id)),
+  );
+
+  const related = new Set<string>([...following, ...followers]);
+  related.delete(userId);
+
+  const { data } = related.size
+    ? await supabase
+        .from("profiles")
+        .select("id,username,display_name,full_name,avatar_url")
+        .in("id", [...related])
+    : await supabase
+        .from("profiles")
+        .select("id,username,display_name,full_name,avatar_url")
+        .neq("id", userId)
+        .limit(20);
+
+  const profiles = (data ?? []) as RawRow[];
+
+  const rankOf = (id: string): number => {
+    const isFollowing = following.has(id);
+    const isFollower = followers.has(id);
+    if (isFollowing && isFollower) return 0;
+    if (isFollowing) return 1;
+    if (isFollower) return 2;
+    return 3;
+  };
+
+  return profiles
+    .filter((row) => String(row.id) !== userId)
+    .map((row) => {
+      const id = String(row.id);
+      const relation: ShareFriendRelation =
+        following.has(id) && followers.has(id)
+          ? "friend"
+          : following.has(id)
+            ? "following"
+            : followers.has(id)
+              ? "follower"
+              : "suggested";
+      return {
+        id,
+        name: displayName(row as Profile),
+        username: String(row.username ?? ""),
+        avatar_url: (row.avatar_url as string | null) ?? null,
+        relation,
+      };
+    })
+    .sort((a, b) => rankOf(a.id) - rankOf(b.id) || a.name.localeCompare(b.name));
+}
+
+/**
+ * Sends a post to another user through the real messaging system
+ * (`public.messages`), so it shows up in their inbox/conversation — not just a
+ * locally copied link. Also counts as one share for the post.
+ */
+export async function sendPostToFriend(
+  post: Post,
+  fromUserId: string,
+  friendId: string,
+  note = "",
+): Promise<{ ok: boolean; message: string }> {
+  if (!supabaseConfigured) {
+    return { ok: false, message: "لا يوجد اتصال بقاعدة البيانات." };
+  }
+  if (!fromUserId || !friendId) {
+    return { ok: false, message: "تعذر تحديد المرسل أو المستلم." };
+  }
+  if (fromUserId === friendId) {
+    return { ok: false, message: "لا يمكنك إرسال المنشور إلى نفسك." };
+  }
+
+  const body = [
+    note.trim() || "أرسل لك هذا المنشور من آني",
+    postShareText(post),
+    buildPostUrl(post.id),
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const { error } = await supabase.from("messages").insert({
+    sender_id: fromUserId,
+    recipient_id: friendId,
+    content: body,
+  });
+
+  if (error) {
+    if (isMissingRelation(error)) {
+      return { ok: false, message: "جدول الرسائل غير مهيأ في قاعدة البيانات." };
+    }
+    if (error.code === "42501") {
+      return { ok: false, message: "لا تملك صلاحية إرسال رسالة لهذا المستخدم." };
+    }
+    return { ok: false, message: "تعذر إرسال المنشور، حاول مرة أخرى." };
+  }
+
+  await recordShare(post, fromUserId);
+  await notifyUser(friendId, fromUserId, "share", post.id, "أرسل لك منشوراً");
+
+  return { ok: true, message: "تم إرسال المنشور" };
+}
+
+export type ShareChannel =
+  | "whatsapp"
+  | "telegram"
+  | "x"
+  | "facebook"
+  | "email"
+  | "sms";
+
+/** Real deep-link/URL for each external share destination. */
+export function buildShareTargetUrl(channel: ShareChannel, post: Post): string {
+  const url = buildPostUrl(post.id);
+  const text = postShareText(post);
+  const encodedUrl = encodeURIComponent(url);
+  const encodedText = encodeURIComponent(text);
+
+  switch (channel) {
+    case "whatsapp":
+      return `https://wa.me/?text=${encodeURIComponent(`${text}\n${url}`)}`;
+    case "telegram":
+      return `https://t.me/share/url?url=${encodedUrl}&text=${encodedText}`;
+    case "x":
+      return `https://twitter.com/intent/tweet?url=${encodedUrl}&text=${encodedText}`;
+    case "facebook":
+      return `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`;
+    case "email":
+      return `mailto:?subject=${encodedText}&body=${encodeURIComponent(`${text}\n\n${url}`)}`;
+    case "sms":
+      return `sms:?&body=${encodeURIComponent(`${text} ${url}`)}`;
+    default:
+      return url;
+  }
+}
+
+/**
+ * Opens the chosen app/website with the post, then records the share.
+ * The window is opened synchronously so mobile browsers don't block it.
+ */
+export function sharePostToApp(
+  channel: ShareChannel,
+  post: Post,
+): void {
+  if (typeof window === "undefined") return;
+  const target = buildShareTargetUrl(channel, post);
+  if (channel === "email" || channel === "sms") {
+    window.location.href = target;
+    return;
+  }
+  window.open(target, "_blank", "noopener,noreferrer");
+}
+
+/** Copies the post link and records the share. */
+export async function copyPostLink(
+  post: Post,
+  userId: string,
+  options: { silent?: boolean } = {},
+): Promise<boolean> {
+  const copied = await copyToClipboard(buildPostUrl(post.id));
+  if (!copied) {
+    toast.error("تعذر نسخ رابط المنشور");
+    return false;
+  }
+  await recordShare(post, userId);
+  if (!options.silent) toast.success("تم نسخ رابط المنشور إلى الحافظة");
+  return true;
+}
+
+/**
+ * Legacy one-shot share (native sheet → clipboard fallback). Kept for callers
+ * that do not open the share menu; both paths record the same `post_shares` row.
+ */
 export async function sharePost(post: Post, userId: string): Promise<void> {
   const url = buildPostUrl(post.id);
   const title = `منشور ${displayName(post.author)} على آني`;
-  const text = post.content ? post.content.slice(0, 140) : title;
-
-  let sharedVia: "web-share" | "clipboard" | "none" = "none";
+  const text = postShareText(post);
 
   if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
     try {
       await navigator.share({ title, text, url });
-      sharedVia = "web-share";
     } catch (error) {
       if ((error as { name?: string } | null)?.name === "AbortError") return;
     }
+  } else if (!(await copyPostLink(post, userId))) {
+    return;
   }
 
-  if (sharedVia === "none") {
-    const copied = await copyToClipboard(url);
-    if (!copied) {
-      toast.error("تعذر نسخ رابط المنشور");
-      return;
-    }
-    sharedVia = "clipboard";
-  }
-
-  const before = readInteractionState(post, userId);
-  const shares = before.shares + (before.shared ? 0 : 1);
-  patchCache(post.id, userId, { shared: true, shares });
-  writeLocalFlag(userId, post.id, { shared: true, shares });
-
-  let persisted = false;
-  if (supabaseConfigured && userId) {
-    try {
-      const { error } = await supabase
-        .from("post_shares")
-        .insert({ post_id: post.id, user_id: userId });
-      // 23505 => this user already shared this post before: the counter is
-      // already counted, so we simply keep the flag.
-      persisted = !error || error.code === "23505" || isMissingRelation(error);
-      if (error && !persisted) {
-        patchCache(post.id, userId, { shares: before.shares });
-      }
-    } catch {
-      persisted = false;
-      patchCache(post.id, userId, { shares: before.shares });
-    }
-    if (persisted) void hydratePostIds([post.id], userId, { force: true });
-  }
-
-  toast.success(
-    sharedVia === "clipboard"
-      ? "تم نسخ رابط المنشور إلى الحافظة"
-      : "تمت مشاركة المنشور",
-  );
+  const persisted = await recordShare(post, userId);
+  toast.success("تمت مشاركة المنشور");
   if (!persisted && !supabaseConfigured) {
     toast.info("تم احتساب المشاركة على هذا الجهاز فقط");
   }
