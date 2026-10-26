@@ -1299,7 +1299,7 @@ export function usePostComments(
     } finally {
       setLoading(false);
     }
-  }, [post.id, userId]);
+  }, [post.id, userId, profile]);
 
   useEffect(() => {
     if (!enabled || loadedRef.current) return;
