@@ -670,7 +670,7 @@ export function decoratePost(post: Post, userId: string): Post {
 async function notifyUser(
   recipientId: string,
   actorId: string,
-  type: "like" | "comment" | "repost" | "follow",
+  type: "like" | "comment" | "repost" | "follow" | "share",
   postId: string,
   content: string,
 ): Promise<void> {
