@@ -1379,6 +1379,102 @@ function ProfilePage({ targetUserId, currentUserId, profile, onProfileUpdate }: 
   );
 }
 
+// --- شريط تفاعلات الريل (إعجاب، تعليق، إعادة نشر، مشاركة، حفظ) ---
+function ReelActions({
+  post,
+  userId,
+  onEdit,
+}: {
+  post: Post;
+  userId: string;
+  onEdit?: (post: Post) => void;
+}) {
+  const interactions = usePostInteractions(post, userId);
+  const [showComments, setShowComments] = useState(false);
+
+  return (
+    <>
+      {showComments && (
+        <div className="absolute inset-x-0 bottom-0 z-40 max-h-[62%] overflow-y-auto bg-zinc-950/95 border-t border-zinc-800 p-3 text-white rounded-t-2xl">
+          <div className="flex items-center justify-between mb-1">
+            <strong className="text-xs">التعليقات ({formatCount(interactions.comments)})</strong>
+            <button type="button" onClick={() => setShowComments(false)} aria-label="إغلاق التعليقات">
+              <X size={16} />
+            </button>
+          </div>
+          <CommentsPanel post={post} currentUserId={userId} />
+        </div>
+      )}
+
+      <div className="absolute right-3 bottom-12 z-30 flex flex-col items-center gap-4 text-white bg-black/40 p-2 rounded-full backdrop-blur-md border border-white/10">
+        <button
+          type="button"
+          aria-pressed={interactions.liked}
+          aria-label={interactions.liked ? 'إلغاء الإعجاب' : 'إعجاب'}
+          className={`flex flex-col items-center gap-0.5 transition active:scale-90 ${interactions.liked ? 'text-pink-500' : 'hover:text-pink-500'}`}
+          onClick={() => void interactions.toggleLike()}
+        >
+          <Heart size={20} fill={interactions.liked ? 'currentColor' : 'none'} />
+          <span className="text-[10px] font-bold">{formatCount(interactions.likes)}</span>
+        </button>
+
+        <button
+          type="button"
+          aria-expanded={showComments}
+          aria-label="التعليقات"
+          className={`flex flex-col items-center gap-0.5 transition ${showComments ? 'text-blue-400' : 'hover:text-blue-400'}`}
+          onClick={() => setShowComments((open) => !open)}
+        >
+          <MessageSquare size={19} />
+          <span className="text-[10px] font-bold">{formatCount(interactions.comments)}</span>
+        </button>
+
+        <button
+          type="button"
+          aria-pressed={interactions.reposted}
+          aria-label="إعادة نشر"
+          className={`flex flex-col items-center gap-0.5 transition active:scale-90 ${interactions.reposted ? 'text-emerald-400' : 'hover:text-emerald-400'}`}
+          onClick={() => void interactions.toggleRepost()}
+        >
+          <Repeat size={19} />
+          <span className="text-[10px] font-bold">{formatCount(interactions.reposts)}</span>
+        </button>
+
+        <button
+          type="button"
+          aria-label="مشاركة"
+          className={`flex flex-col items-center gap-0.5 transition active:scale-90 ${interactions.shared ? 'text-purple-400' : 'hover:text-purple-400'}`}
+          onClick={() => void interactions.share()}
+        >
+          <Share2 size={19} />
+          <span className="text-[10px] font-bold">{formatCount(interactions.shares)}</span>
+        </button>
+
+        <button
+          type="button"
+          aria-pressed={interactions.bookmarked}
+          aria-label={interactions.bookmarked ? 'إزالة من المحفوظات' : 'حفظ الريل'}
+          className={`transition active:scale-90 ${interactions.bookmarked ? 'text-amber-400' : 'hover:text-amber-400'}`}
+          onClick={() => void interactions.toggleBookmark()}
+        >
+          <Bookmark size={19} fill={interactions.bookmarked ? 'currentColor' : 'none'} />
+        </button>
+
+        {post.user_id === userId && onEdit && (
+          <button
+            type="button"
+            aria-label="تعديل الريل"
+            className="hover:text-amber-400 transition"
+            onClick={() => onEdit(post)}
+          >
+            <MoreVertical size={20} />
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
 // --- صفحة Reels ---
 function ReelsPage({ userId }: { userId: string }) {
   const { posts, loading, refresh } = usePosts('reel', undefined, userId);
@@ -1454,36 +1550,14 @@ function ReelsPage({ userId }: { userId: string }) {
               {post.content && <p className="text-xs text-zinc-200 mt-1">{post.content}</p>}
             </div>
 
-            <div className="absolute right-3 bottom-12 z-30 flex flex-col items-center gap-4 text-white bg-black/40 p-2 rounded-full backdrop-blur-md border border-white/10">
-              <button className="flex flex-col items-center gap-0.5 hover:text-pink-500 transition">
-                <Heart size={20} />
-                <span className="text-[10px] font-bold">{post.likes?.length || 0}</span>
-              </button>
-
-              <button className="flex flex-col items-center gap-0.5 hover:text-blue-400 transition">
-                <MessageSquare size={19} />
-                <span className="text-[10px] font-bold">{post.comments?.length || 0}</span>
-              </button>
-
-              <button className="flex flex-col items-center gap-0.5 hover:text-emerald-400 transition">
-                <Repeat size={19} />
-              </button>
-
-              <button className="flex flex-col items-center gap-0.5 hover:text-purple-400 transition" onClick={() => alert('تم نسخ رابط الريل للمشاركة!')}>
-                <Share2 size={19} />
-              </button>
-
-              <button className="hover:text-amber-400 transition" onClick={() => {
-                if (post.user_id === userId) {
-                  setEditingPost(post);
-                  setEditContent(post.content || '');
-                } else {
-                  alert('تم حفظ الريل للمفضلة!');
-                }
-              }}>
-                <MoreVertical size={20} />
-              </button>
-            </div>
+            <ReelActions
+              post={post}
+              userId={userId}
+              onEdit={(target) => {
+                setEditingPost(target);
+                setEditContent(target.content || '');
+              }}
+            />
           </article>
         ))}
       </div>
