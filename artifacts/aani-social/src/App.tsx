@@ -501,7 +501,7 @@ function StoriesBar({ userId, currentProfile }: { userId: string; currentProfile
         mediaType = storyFile.type.startsWith('video') ? 'video' : 'photo';
       }
 
-      await supabase.from('stories').insert({
+      const { error: insertError } = await supabase.from('stories').insert({
         user_id: userId,
         media_url: publicUrl || null,
         media_type: mediaType,
@@ -510,6 +510,7 @@ function StoriesBar({ userId, currentProfile }: { userId: string; currentProfile
         duration_seconds: uploadDuration,
         timed_texts: timedTexts
       });
+      if (insertError) throw insertError;
 
       setStoryFile(null);
       setCaption('');
