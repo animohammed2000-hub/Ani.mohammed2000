@@ -177,18 +177,35 @@ export function snapshotFromPost(
   const existing = readCache(post.id, userId);
   const local = readLocalFlags(userId)[post.id] ?? {};
   return {
-    likes: toNumber(post.likes_count, existing?.likes ?? 0),
-    comments: toNumber(post.comments_count, existing?.comments ?? 0),
-    reposts: toNumber(post.reposts_count, existing?.reposts ?? 0),
-    shares: toNumber(post.shares_count, existing?.shares ?? 0),
-    liked: post.liked_by_me ?? existing?.liked ?? false,
+    likes: localNumber(local.likes, post.likes_count, existing?.likes ?? 0),
+    comments: localNumber(
+      local.comments,
+      post.comments_count,
+      existing?.comments ?? 0,
+    ),
+    reposts: localNumber(
+      local.reposts,
+      post.reposts_count,
+      existing?.reposts ?? 0,
+    ),
+    shares: localNumber(local.shares, post.shares_count, existing?.shares ?? 0),
+    liked: local.liked ?? post.liked_by_me ?? existing?.liked ?? false,
     bookmarked:
-      post.saved_by_me ?? local.bookmarked ?? existing?.bookmarked ?? false,
+      local.bookmarked ?? post.saved_by_me ?? existing?.bookmarked ?? false,
     reposted:
-      post.reposted_by_me ?? local.reposted ?? existing?.reposted ?? false,
+      local.reposted ?? post.reposted_by_me ?? existing?.reposted ?? false,
     shared: local.shared ?? existing?.shared ?? false,
     hydrated: existing?.hydrated ?? false,
   };
+}
+
+function localNumber(
+  local: number | undefined,
+  server: number | undefined,
+  fallback: number,
+): number {
+  if (typeof local === "number" && Number.isFinite(local)) return local;
+  return toNumber(server, fallback);
 }
 
 /** Read the current state of a post for a user (no React needed). */
