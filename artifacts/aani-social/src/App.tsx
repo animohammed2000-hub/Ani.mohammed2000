@@ -1054,7 +1054,7 @@ function usePosts(
 
 // --- الصفحة الرئيسية ---
 function FeedPage({ userId, profile }: { userId: string; profile: Profile | null }) {
-  const { posts, loading, refresh } = usePosts('feed');
+  const { posts, loading, refresh } = usePosts('feed', undefined, userId);
 
   return (
     <section className="new-view w-full max-w-lg mx-auto">
@@ -1304,7 +1304,7 @@ function ProfilePage({ targetUserId, currentUserId, profile, onProfileUpdate }: 
   const [postCount, setPostCount] = useState(0);
   const [isFollowing, setIsFollowing] = useState(false);
 
-  const { posts, loading, refresh } = usePosts('profile', activeUserId);
+  const { posts, loading, refresh } = usePosts('profile', activeUserId, currentUserId);
 
   useEffect(() => {
     if (!supabaseConfigured || !activeUserId) return;
@@ -1381,7 +1381,7 @@ function ProfilePage({ targetUserId, currentUserId, profile, onProfileUpdate }: 
 
 // --- صفحة Reels ---
 function ReelsPage({ userId }: { userId: string }) {
-  const { posts, loading, refresh } = usePosts('reel');
+  const { posts, loading, refresh } = usePosts('reel', undefined, userId);
   const [editingPost, setEditingPost] = useState<Post | null>(null);
   const [editContent, setEditContent] = useState('');
   const [editFile, setEditFile] = useState<File | null>(null);
