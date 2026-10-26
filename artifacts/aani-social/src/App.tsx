@@ -2214,7 +2214,7 @@ function ReelActions({
           type="button"
           aria-label="مشاركة"
           className={`flex flex-col items-center gap-0.5 transition active:scale-90 ${interactions.shared ? 'text-purple-400' : 'hover:text-purple-400'}`}
-          onClick={() => void interactions.share()}
+          onClick={() => setShowShare(true)}
         >
           <Share2 size={19} />
           <span className="text-[10px] font-bold">{formatCount(interactions.shares)}</span>
