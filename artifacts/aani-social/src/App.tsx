@@ -35,6 +35,14 @@ import {
   uploadPostAudio,
   usePostControls,
 } from '@/lib/postControls';
+import {
+  buildLegacyReportPayload,
+  buildReportPayload,
+  classifyReportFailure,
+  reportFailureMessage,
+  shouldRetryWithLegacyShape,
+  type ReportErrorLike,
+} from '@/lib/reportSubmit';
 import NotFound from '@/pages/not-found';
 import '@/index.css';
 
