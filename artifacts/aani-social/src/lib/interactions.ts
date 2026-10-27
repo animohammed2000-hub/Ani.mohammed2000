@@ -641,6 +641,10 @@ export async function decoratePosts(
     repost_attribution: row.reposter_id
       ? (byId.get(String(row.reposter_id)) ?? null)
       : null,
+    // Optional columns - absent until migration 20261028000000 is applied.
+    comments_disabled: row.comments_disabled === true,
+    audio_url: (row.audio_url as string | null) ?? null,
+    audio_title: (row.audio_title as string | null) ?? null,
   }));
 
   await hydratePosts(posts, userId);
