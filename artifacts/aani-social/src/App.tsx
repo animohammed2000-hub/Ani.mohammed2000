@@ -1155,6 +1155,8 @@ function PostCard({
   const [showShare, setShowShare] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const interactions = usePostInteractions(post, currentUserId);
+  const controls = usePostControls(post, currentUserId);
+  const commentsDisabled = controls.commentsDisabled;
   const liked = interactions.liked;
 
   const isOwner = post.user_id === currentUserId;
@@ -1165,6 +1167,8 @@ function PostCard({
   const [editContent, setEditContent] = useState(post.content ?? '');
   const [editFile, setEditFile] = useState<File | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [savingAudio, setSavingAudio] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [reportReason, setReportReason] = useState('محتوى غير مناسب');
   const [reportDetails, setReportDetails] = useState('');
