@@ -1527,6 +1527,45 @@ function PostCard({
           ? <video className="media-post rounded-xl mt-2 max-h-96 w-full object-cover" src={post.media_url} controls playsInline preload="metadata" />
           : <img className="media-post rounded-xl mt-2 max-h-96 w-full object-cover" src={post.media_url} alt="" />)}
 
+        {controls.audio && (
+          <div className="mt-2 flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950/80 p-2">
+            <button
+              type="button"
+              onClick={() => setAudioPlaying((playing) => !playing)}
+              aria-label={audioPlaying ? 'إيقاف المقطع الصوتي' : 'تشغيل المقطع الصوتي'}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-pink-500 text-black"
+            >
+              {audioPlaying ? <Pause size={13} /> : <Play size={13} />}
+            </button>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[10px] font-bold text-zinc-200">{controls.audio.title}</p>
+              <div className="relative mt-1 h-1 overflow-hidden rounded-full bg-zinc-800">
+                <div
+                  className="absolute inset-y-0 start-0 rounded-full bg-pink-500 transition-all"
+                  style={{ width: `${Math.min(100, audioProgress * 100)}%` }}
+                />
+              </div>
+            </div>
+            <Music size={13} className="shrink-0 text-pink-400" />
+            <audio
+              ref={audioRef}
+              src={controls.audio.url}
+              preload="none"
+              onTimeUpdate={(event) => {
+                const el = event.currentTarget;
+                if (el.duration && Number.isFinite(el.duration)) {
+                  setAudioProgress(el.currentTime / el.duration);
+                }
+              }}
+              onEnded={() => {
+                setAudioPlaying(false);
+                setAudioProgress(0);
+              }}
+              className="hidden"
+            />
+          </div>
+        )}
+
         <div className="flex items-center justify-between text-xs text-zinc-400 border-t border-zinc-800/80 pt-2.5 mt-3 w-full shrink-0 flex-nowrap gap-1">
           <div className="flex items-center gap-3.5 shrink-0">
             <button
@@ -1545,7 +1584,13 @@ function PostCard({
               aria-expanded={showComments}
               aria-label="التعليقات"
               className={`flex items-center gap-1 transition shrink-0 ${showComments ? 'text-blue-400' : 'hover:text-blue-400'}`}
-              onClick={() => setShowComments((open) => !open)}
+              onClick={() => {
+                if (commentsDisabled && !isOwner) {
+                  toast.info('التعليقات مغلقة على هذا المنشور');
+                  return;
+                }
+                setShowComments((open) => !open);
+              }}
             >
               <MessageSquare size={17} />
               <span>{formatCount(interactions.comments)}</span>
