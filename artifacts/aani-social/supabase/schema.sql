@@ -627,3 +627,73 @@ begin
     end;
   end if;
 end $$;
+
+-- =====================================================================
+-- Post controls (خيارات المنشور) — mirrors
+-- supabase/migrations/20261028000000_post_controls.sql
+-- =====================================================================
+
+alter table public.posts add column if not exists comments_disabled boolean not null default false;
+alter table public.posts add column if not exists audio_url text;
+alter table public.posts add column if not exists audio_title text;
+
+create table if not exists public.post_feedback (
+  id uuid primary key default gen_random_uuid(),
+  post_id uuid not null references public.posts (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  feedback text not null check (feedback in ('interested', 'not_interested')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint aani_post_feedback_post_user_unique unique (post_id, user_id)
+);
+
+create index if not exists aani_post_feedback_user_idx
+  on public.post_feedback (user_id, updated_at desc);
+create index if not exists aani_post_feedback_post_idx
+  on public.post_feedback (post_id);
+
+alter table public.post_feedback enable row level security;
+
+drop policy if exists "Users manage their own post feedback" on public.post_feedback;
+create policy "Users manage their own post feedback"
+  on public.post_feedback for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+grant select, insert, update, delete on public.post_feedback to authenticated;
+
+create or replace function public.aani_touch_post_feedback()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end $$;
+
+drop trigger if exists aani_post_feedback_touch on public.post_feedback;
+create trigger aani_post_feedback_touch
+  before update on public.post_feedback
+  for each row execute function public.aani_touch_post_feedback();
+
+-- Authoritative guard: no new comment on a post whose comments are closed.
+create or replace function public.aani_block_closed_comments()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if exists (
+    select 1 from public.posts p
+    where p.id = new.post_id and p.comments_disabled = true
+  ) then
+    raise exception 'comments are disabled for this post' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists aani_comments_closed_guard on public.comments;
+create trigger aani_comments_closed_guard
+  before insert on public.comments
+  for each row execute function public.aani_block_closed_comments();
