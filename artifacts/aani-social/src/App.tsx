@@ -1076,9 +1076,17 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
                 </DropdownMenuItem>
               </>
             ) : (
-              <DropdownMenuItem className="text-red-400 focus:text-red-400" onSelect={() => void reportPost()}>
-                <Flag size={16} /> إبلاغ عن المنشور
-              </DropdownMenuItem>
+              <>
+                <DropdownMenuItem className="text-red-400 focus:text-red-400" onSelect={() => void reportPost()}>
+                  <Flag size={16} /> إبلاغ عن المنشور
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => void saveFeedback('interested')}>
+                  <ThumbsUp size={16} /> {feedback === 'interested' ? 'إلغاء مهتم' : 'مهتم'}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => void saveFeedback('not_interested')}>
+                  <EyeOff size={16} /> {feedback === 'not_interested' ? 'إلغاء غير مهتم' : 'غير مهتم'}
+                </DropdownMenuItem>
+              </>
             )}
           </DropdownMenuContent>
         </DropdownMenu>
@@ -1163,16 +1171,6 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
             <Bookmark size={18} fill={bookmarked ? 'currentColor' : 'none'} />
           </button>
 
-          {post.user_id !== currentUserId && (
-            <>
-              <button type="button" className={`post-action-btn flex items-center gap-1 text-xs transition ${feedback === 'interested' ? 'text-cyan-400' : 'text-zinc-400 hover:text-cyan-400'}`} onClick={() => void saveFeedback('interested')} aria-pressed={feedback === 'interested'}>
-                <ThumbsUp size={17} /> مهتم
-              </button>
-              <button type="button" className={`post-action-btn flex items-center gap-1 text-xs transition ${feedback === 'not_interested' ? 'text-zinc-200' : 'text-zinc-400 hover:text-white'}`} onClick={() => void saveFeedback('not_interested')} aria-pressed={feedback === 'not_interested'}>
-                <EyeOff size={17} /> غير مهتم
-              </button>
-            </>
-          )}
         </div>
 
         {comments && (
@@ -1220,8 +1218,46 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
 async function hydratePostInteractions(posts: Post[], currentUserId: string): Promise<Post[]> {
   if (!supabaseConfigured || posts.length === 0) return posts;
 
-  const { data, error } = await supabase.rpc('get_post_interactions', { p_post_ids: posts.map(post => post.id) });
-  if (error) return posts;
+  const postIds = posts.map(post => post.id);
+  const { data, error } = await supabase.rpc('get_post_interactions', { p_post_ids: postIds });
+  if (error) {
+    const likes: Array<{ post_id: string; user_id: string }> = [];
+    for (let offset = 0; ; offset += 1000) {
+      const { data: page, error: likesError } = await supabase
+        .from('likes')
+        .select('post_id,user_id')
+        .in('post_id', postIds)
+        .order('post_id')
+        .order('user_id')
+        .range(offset, offset + 999);
+      if (likesError) return posts;
+      likes.push(...(page || []));
+      if (!page || page.length < 1000) break;
+    }
+
+    const { data: feedbackRows } = await supabase
+      .from('post_feedback')
+      .select('post_id,feedback')
+      .eq('user_id', currentUserId)
+      .in('post_id', postIds);
+    const likesByPost = new Map<string, { count: number; likedByMe: boolean }>();
+    for (const like of likes) {
+      const summary = likesByPost.get(like.post_id) || { count: 0, likedByMe: false };
+      summary.count += 1;
+      summary.likedByMe ||= like.user_id === currentUserId;
+      likesByPost.set(like.post_id, summary);
+    }
+    const feedbackByPost = new Map((feedbackRows || []).map(row => [row.post_id, row.feedback]));
+    return posts.map(post => {
+      const summary = likesByPost.get(post.id);
+      return {
+        ...post,
+        likes_count: summary?.count || 0,
+        liked_by_me: summary?.likedByMe || false,
+        feedback_by_me: (feedbackByPost.get(post.id) as Post['feedback_by_me']) || null,
+      };
+    });
+  }
   const interactionRows = (data || []) as Array<{
     post_id: string;
     likes_count: number;
@@ -1731,11 +1767,20 @@ function ReelSlide({ post, currentUserId }: { post: Post; currentUserId: string 
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLElement>(null);
   const [playing, setPlaying] = useState(false);
-  const [liked, setLiked] = useState((post.likes || []).some(l => l.user_id === currentUserId));
-  const [likesCount, setLikesCount] = useState(post.likes?.length || 0);
-  const [saved, setSaved] = useState(false);
-  const [reposted, setReposted] = useState(false);
+  const [liked, setLiked] = useState(post.liked_by_me ?? (post.likes || []).some(l => l.user_id === currentUserId));
+  const [likesCount, setLikesCount] = useState(post.likes_count ?? post.likes?.length ?? 0);
+  const [saved, setSaved] = useState(post.saved_by_me ?? false);
+  const [reposted, setReposted] = useState(post.reposted_by_me ?? false);
+  const [feedback, setFeedback] = useState<Post['feedback_by_me']>(post.feedback_by_me || null);
   const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    setLiked(post.liked_by_me ?? (post.likes || []).some(like => like.user_id === currentUserId));
+    setLikesCount(post.likes_count ?? post.likes?.length ?? 0);
+    setSaved(post.saved_by_me ?? false);
+    setReposted(post.reposted_by_me ?? false);
+    setFeedback(post.feedback_by_me || null);
+  }, [post, currentUserId]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -1781,9 +1826,11 @@ function ReelSlide({ post, currentUserId }: { post: Post; currentUserId: string 
     if (!supabaseConfigured) return;
     try {
       if (prevLiked) {
-        await supabase.from('likes').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+        const { error } = await supabase.from('likes').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+        if (error) throw error;
       } else {
-        await supabase.from('likes').insert({ post_id: post.id, user_id: currentUserId });
+        const { error } = await supabase.from('likes').insert({ post_id: post.id, user_id: currentUserId });
+        if (error) throw error;
       }
     } catch {
       setLiked(prevLiked);
@@ -1831,6 +1878,37 @@ function ReelSlide({ post, currentUserId }: { post: Post; currentUserId: string 
       await navigator.clipboard.writeText(shareUrl);
       alert('تم نسخ رابط الريل للمشاركة!');
     }
+  };
+
+  const saveFeedback = async (value: 'interested' | 'not_interested') => {
+    if (!supabaseConfigured) return;
+    const previousFeedback = feedback;
+    const nextFeedback = previousFeedback === value ? null : value;
+    setFeedback(nextFeedback);
+    try {
+      const result = nextFeedback
+        ? await supabase.from('post_feedback').upsert({ post_id: post.id, user_id: currentUserId, feedback: nextFeedback }, { onConflict: 'post_id,user_id' })
+        : await supabase.from('post_feedback').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+      if (result.error) throw result.error;
+    } catch {
+      setFeedback(previousFeedback);
+      alert('تعذر حفظ اختيارك. تأكد من تطبيق ترحيل تفاعلات المنشورات في Supabase.');
+    }
+  };
+
+  const reportPost = async () => {
+    const reason = window.prompt('ما سبب الإبلاغ عن هذا الريل؟');
+    if (!reason?.trim() || !supabaseConfigured) return;
+    const { error } = await supabase.from('post_reports').insert({
+      post_id: post.id,
+      reporter_id: currentUserId,
+      reason: reason.trim(),
+    });
+    if (error) {
+      alert(error.code === '23505' ? 'سبق أن أبلغت عن هذا الريل.' : 'تعذر إرسال البلاغ. تأكد من تطبيق ترحيل التفاعلات في Supabase.');
+      return;
+    }
+    alert('تم إرسال البلاغ للمراجعة.');
   };
 
   return (
@@ -1911,12 +1989,15 @@ function ReelSlide({ post, currentUserId }: { post: Post; currentUserId: string 
           </button>
 
           {menuOpen && (
-            <div className="absolute right-10 bottom-0 bg-zinc-900 border border-zinc-800 rounded-xl p-2 w-36 text-xs text-white space-y-2 shadow-2xl z-40">
-              <button onClick={() => { alert('تم الإبلاغ عن الفيديو'); setMenuOpen(false); }} className="flex items-center gap-2 w-full text-red-400 p-1.5 hover:bg-zinc-800 rounded-lg">
-                <Flag size={14} /> الإبلاغ
+            <div className="absolute right-10 bottom-0 bg-zinc-900 border border-zinc-800 rounded-xl p-2 w-48 text-xs text-white shadow-2xl z-40">
+              <button onClick={() => { void reportPost(); setMenuOpen(false); }} className="flex items-center gap-2 w-full text-red-400 p-2 hover:bg-zinc-800 rounded-lg">
+                <Flag size={14} /> إبلاغ عن الريل
               </button>
-              <button onClick={() => { alert('تم الحفظ كغير مهتم'); setMenuOpen(false); }} className="flex items-center gap-2 w-full text-zinc-300 p-1.5 hover:bg-zinc-800 rounded-lg">
-                <EyeOff size={14} /> غير مهتم
+              <button onClick={() => { void saveFeedback('interested'); setMenuOpen(false); }} className={`flex items-center gap-2 w-full p-2 hover:bg-zinc-800 rounded-lg ${feedback === 'interested' ? 'text-cyan-300' : 'text-zinc-300'}`}>
+                <ThumbsUp size={14} /> {feedback === 'interested' ? 'إلغاء مهتم' : 'مهتم'}
+              </button>
+              <button onClick={() => { void saveFeedback('not_interested'); setMenuOpen(false); }} className={`flex items-center gap-2 w-full p-2 hover:bg-zinc-800 rounded-lg ${feedback === 'not_interested' ? 'text-zinc-100' : 'text-zinc-300'}`}>
+                <EyeOff size={14} /> {feedback === 'not_interested' ? 'إلغاء غير مهتم' : 'غير مهتم'}
               </button>
             </div>
           )}
