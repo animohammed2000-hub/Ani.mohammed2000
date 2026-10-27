@@ -1320,26 +1320,18 @@ function PostCard({
       : reportReason;
 
     try {
-      // Full shape once migration 20261027000000 is applied.
-      let { error } = await supabase.from('reports').insert({
-        post_id: post.id,
-        reported_user_id: post.user_id,
-        reporter_id: currentUserId,
-        reason,
-        status: 'pending',
-      });
+      // Try the migrated shape first: it carries reporter_id + status.
+      let { error } = await supabase
+        .from('reports')
+        .insert(buildReportPayload({ postId: post.id, postAuthorId: post.user_id, currentUserId, reason }));
 
-      // Older/live deployments expose only (post_id, user_id, reason).
-      // PGRST204 = column absent from the schema cache.
-      const missingColumn =
-        (error as { code?: string } | null)?.code === 'PGRST204' ||
-        (error as { code?: string } | null)?.code === '42703';
-      if (missingColumn) {
-        ({ error } = await supabase.from('reports').insert({
-          post_id: post.id,
-          user_id: currentUserId,
-          reason,
-        }));
+      // The live/deployed table may still be the legacy (post_id, user_id,
+      // reason) shape. Only retry when a *column* was missing — retrying after
+      // an RLS/network error would hide the real failure.
+      if (shouldRetryWithLegacyShape(error as ReportErrorLike)) {
+        ({ error } = await supabase
+          .from('reports')
+          .insert(buildLegacyReportPayload({ postId: post.id, currentUserId, reason })));
       }
 
       if (error) throw error;
@@ -1347,18 +1339,14 @@ function PostCard({
       setShowReport(false);
       setReportDetails('');
     } catch (reportError) {
-      const code = (reportError as { code?: string } | null)?.code;
-      if (code === '23505') {
-        toast.info('سبق أن أبلغت عن هذا المنشور.');
+      const kind = classifyReportFailure(reportError as ReportErrorLike);
+      if (kind === 'duplicate') {
+        toast.info(reportFailureMessage(kind));
         setShowReport(false);
-      } else if (code === '42P01' || code === 'PGRST205') {
-        toast.warning(
-          'لم يتم تجهيز جدول البلاغات بعد في قاعدة البيانات. طبّق ملف الترحيل supabase/migrations لتفعيل الإبلاغ.',
-        );
-      } else if (code === '42501') {
-        toast.warning('تعذر تسجيل البلاغ: صلاحيات الجدول تمنع الإرسال. راجع سياسات RLS في supabase/migrations.');
+      } else if (kind === 'table_missing' || kind === 'forbidden') {
+        toast.warning(reportFailureMessage(kind));
       } else {
-        toast.error('تعذر إرسال البلاغ، حاول مرة أخرى.');
+        toast.error(reportFailureMessage(kind));
       }
     } finally {
       setReporting(false);
