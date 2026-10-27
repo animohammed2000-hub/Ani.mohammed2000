@@ -1632,10 +1632,91 @@ function PostCard({
           </button>
         </div>
 
-        {showComments && (
+        {showComments && !commentsDisabled && (
           <CommentsPanel post={post} currentUserId={currentUserId} profile={profile} />
         )}
+
+        {showComments && commentsDisabled && (
+          <p className="mt-2 rounded-xl border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-[10px] text-zinc-400">
+            التعليقات مغلقة على هذا المنشور.
+          </p>
+        )}
       </div>
+
+      {showAudio && (
+        <div className="modal-overlay" onClick={() => !savingAudio && setShowAudio(false)}>
+          <div
+            className="modal-content max-w-sm w-full bg-zinc-900 border border-zinc-800 p-4 rounded-2xl space-y-3"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
+              <h3 className="font-bold text-white text-sm flex items-center gap-1">
+                <Music size={16} className="text-pink-500" /> مقطع صوتي للمنشور
+              </h3>
+              <button type="button" onClick={() => setShowAudio(false)} aria-label="إغلاق">
+                <X size={18} className="text-zinc-400" />
+              </button>
+            </div>
+
+            {controls.audio && (
+              <div className="flex items-center gap-2 rounded-xl border border-pink-500/40 bg-pink-500/10 p-2.5">
+                <Music size={15} className="shrink-0 text-pink-400" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[11px] font-bold text-pink-200">{controls.audio.title}</p>
+                  <p className="text-[10px] text-pink-300/70">المقطع الحالي</p>
+                </div>
+                <button
+                  type="button"
+                  disabled={savingAudio}
+                  onClick={() => void handleSaveAudio()}
+                  className="shrink-0 rounded-lg px-2 py-1 text-[10px] font-bold text-red-300 hover:bg-red-500/15 disabled:opacity-60"
+                >
+                  إزالة
+                </button>
+              </div>
+            )}
+
+            <label className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 p-2.5 rounded-xl cursor-pointer hover:bg-zinc-800 text-xs text-zinc-300">
+              <Music size={16} className="text-purple-400" />
+              <span className="truncate">
+                {audioFile ? audioFile.name : controls.audio ? 'اختر مقطعاً بديلاً' : 'اختر ملفاً صوتياً'}
+              </span>
+              <input
+                type="file"
+                accept="audio/*"
+                className="hidden"
+                onChange={(event) => setAudioFile(event.target.files?.[0] ?? null)}
+              />
+            </label>
+
+            {audioFile && (
+              <audio src={URL.createObjectURL(audioFile)} controls className="w-full" />
+            )}
+
+            <p className="text-[10px] leading-relaxed text-zinc-500">
+              يُشغّل المقطع تلقائياً بشكل مصغّر أسفل المنشور، ويستطيع المشاهد تشغيله أو إيقافه.
+            </p>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setShowAudio(false)}
+                className="text-xs px-3 py-1.5 rounded-lg text-zinc-300 hover:bg-zinc-800"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                disabled={savingAudio || !audioFile}
+                onClick={() => void handleSaveAudio()}
+                className="button-primary text-xs px-4 disabled:opacity-60"
+              >
+                {savingAudio ? 'جاري الحفظ...' : 'حفظ المقطع'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showEdit && (
         <div className="modal-overlay" onClick={() => !savingEdit && setShowEdit(false)}>
