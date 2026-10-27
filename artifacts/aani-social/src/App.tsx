@@ -3,12 +3,16 @@ import { Link, Route, Router as WouterRouter, Switch, useLocation } from 'wouter
 import { 
   ArrowUpLeft, Bell, Bookmark, ChevronDown, ChevronUp, Clock, Film, Filter, Heart, Home, 
   ImagePlus, MessageCircle, MessageSquare, MoreVertical, Plus, Repeat, Search, Send, 
-  Settings, Share2, Sparkles, Star, Trash2, UserRound, Video, X, Edit3, SendHorizontal,
-  Bot, Loader2, Code, Link2, Flag, Check, Copy, Mail, Music, Pause, Play
+  Settings, Sparkles, Star, Trash2, UserRound, Video, X, SendHorizontal, Pencil,
+  ThumbsUp,
+  Bot, Loader2, Play, Flag, EyeOff
 } from 'lucide-react';
 
 import { Toaster, toast } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { supabase, supabaseConfigured, storageBucket } from '@/lib/supabase';
 import { displayName, formatCount, formatDate, normalizeProfile, type Post, type Profile } from '@/lib/types';
 import {
@@ -223,16 +227,31 @@ export function AuthPage({ mode, afterAuth }: { mode: 'login' | 'signup'; afterA
           password,
           options: { data: { username: username.trim().toLowerCase(), full_name: fullName.trim() } },
         });
+
         if (authError) throw authError;
-        if (data.session) { afterAuth(); setLocation('/feed'); } 
-        else { setSuccess('أرسلنا رابط التحقق إلى بريدك الإلكتروني.'); }
+
+        if (data.session) { 
+          afterAuth(); 
+          setLocation('/feed'); 
+        } else { 
+          setSuccess('تم إنشاء الحساب. افتح رسالة التفعيل التي أرسلناها إلى بريدك الإلكتروني، ثم سجّل الدخول.');
+        }
       } else {
         const { error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
         if (authError) throw authError;
         afterAuth(); setLocation('/feed');
       }
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'حدث خطأ. حاول مرة أخرى.');
+    } catch (reason: any) {
+      const message = reason?.message || '';
+      if (/profiles_username_lower_idx|duplicate key|unique constraint/i.test(message)) {
+        setError('اسم المستخدم مستخدم بالفعل. اختر اسمًا آخر ثم حاول مجددًا.');
+      } else if (/invalid path|request url|redirect/i.test(message)) {
+        setError('رابط التفعيل غير مسموح في إعدادات Supabase. أضف نطاق الموقع المنشور إلى Auth ثم URL Configuration ثم Redirect URLs.');
+      } else if (/database error saving new user/i.test(message)) {
+        setError('تعذر إنشاء ملف الحساب. جرّب اسم مستخدم آخر، وإذا استمر الخطأ فتحقق من تطبيق مخطط profiles ومشغّل إنشاء الحساب في Supabase.');
+      } else {
+        setError(message || 'حدث خطأ في الاتصال. حاول مرة أخرى.');
+      }
     } finally { setBusy(false); }
   };
 
@@ -500,7 +519,7 @@ function StoriesBar({ userId, currentProfile }: { userId: string; currentProfile
         mediaType = storyFile.type.startsWith('video') ? 'video' : 'photo';
       }
 
-      await supabase.from('stories').insert({
+      const { error: insertError } = await supabase.from('stories').insert({
         user_id: userId,
         media_url: publicUrl || null,
         media_type: mediaType,
@@ -509,6 +528,7 @@ function StoriesBar({ userId, currentProfile }: { userId: string; currentProfile
         duration_seconds: uploadDuration,
         timed_texts: timedTexts
       });
+      if (insertError) throw insertError;
 
       setStoryFile(null);
       setCaption('');
@@ -524,12 +544,20 @@ function StoriesBar({ userId, currentProfile }: { userId: string; currentProfile
 
   const handleDeleteStory = async () => {
     if (!supabaseConfigured || !currentStory) return;
-    if (confirm('هل أنت تأكد من رغبتك في حذف هذه الستوري؟')) {
-      await supabase.from('stories').delete().eq('id', currentStory.id);
-      setShowMenu(false);
-      await fetchStories();
-      handleNextStory();
+    if (currentStory.user_id !== userId) return;
+    if (!confirm('هل أنت متأكد من رغبتك في حذف هذه الستوري؟')) return;
+    const { error } = await supabase
+      .from('stories')
+      .delete()
+      .eq('id', currentStory.id)
+      .eq('user_id', userId);
+    if (error) {
+      alert(error.message);
+      return;
     }
+    setShowMenu(false);
+    await fetchStories();
+    handleNextStory();
   };
 
   return (
@@ -801,1213 +829,581 @@ function StoriesBar({ userId, currentProfile }: { userId: string; currentProfile
   );
 }
 
-// --- كارت المنشور ---
-function CommentsPanel({
-  post,
-  currentUserId,
-  profile,
-}: {
-  post: Post;
-  currentUserId: string;
-  profile?: Profile | null;
-}) {
-  const { comments, loading, sending, error, add, remove } = usePostComments(
-    post,
-    currentUserId,
-    profile ?? null,
-    true,
-  );
-  const [text, setText] = useState('');
+// --- كارت المنشور العصري بنمط (X / Twitter Carousel + Optimistic UI) ---
+function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserId: string; onRefresh: () => void }) {
+  const [commentText, setCommentText] = useState('');
+  const [comments, setComments] = useState<any[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [commentsCount, setCommentsCount] = useState(post.comments_count || 0);
+  const [repostsCount, setRepostsCount] = useState(post.reposts_count || 0);
+  const [feedback, setFeedback] = useState<Post['feedback_by_me']>(post.feedback_by_me || null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editContent, setEditContent] = useState(post.content || '');
+  const [replacementFile, setReplacementFile] = useState<File | null>(null);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const trackRef = useRef<HTMLDivElement>(null);
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!text.trim() || sending) return;
-    const ok = await add(text);
-    if (ok) setText('');
+  // Optimistic UI states
+  const [liked, setLiked] = useState(post.liked_by_me ?? (post.likes || []).some(like => like.user_id === currentUserId));
+  const [likesCount, setLikesCount] = useState(post.likes_count ?? post.likes?.length ?? 0);
+  const [reposted, setReposted] = useState(post.reposted_by_me ?? false);
+  const [bookmarked, setBookmarked] = useState(post.saved_by_me ?? false);
+  const [isAnimating, setIsAnimating] = useState(false);
+
+  const urls = useMemo(() => {
+    if (post.media_urls && post.media_urls.length > 0) return post.media_urls;
+    if (post.media_url) return [post.media_url];
+    return [];
+  }, [post.media_urls, post.media_url]);
+
+  useEffect(() => {
+    setLiked(post.liked_by_me ?? (post.likes || []).some(like => like.user_id === currentUserId));
+    setLikesCount(post.likes_count ?? post.likes?.length ?? 0);
+    setReposted(post.reposted_by_me ?? false);
+    setBookmarked(post.saved_by_me ?? false);
+    setCommentsCount(post.comments_count || 0);
+    setRepostsCount(post.reposts_count || 0);
+    setFeedback(post.feedback_by_me || null);
+  }, [post, currentUserId]);
+
+  const handleScroll = useCallback(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const idx = Math.round(Math.abs(el.scrollLeft) / el.clientWidth);
+    setCurrentImageIndex(Math.min(idx, urls.length - 1));
+  }, [urls.length]);
+
+  const goToImage = (i: number) => {
+    const el = trackRef.current;
+    if (!el) return;
+    el.scrollTo({ left: -i * el.clientWidth, behavior: 'smooth' });
   };
 
-  return (
-    <div className="mt-3 w-full border-t border-zinc-800/70 pt-3">
-      {loading && (
-        <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-          <Loader2 size={13} className="animate-spin" />
-          <span>جارٍ تحميل التعليقات...</span>
-        </div>
-      )}
+  const toggleLike = async () => {
+    const prevLiked = liked;
+    const prevCount = likesCount;
+    const nextLiked = !prevLiked;
 
-      {error && <p className="text-[11px] text-red-400 mb-2">{error}</p>}
+    setLiked(nextLiked);
+    setLikesCount(prevCount + (nextLiked ? 1 : -1));
+    setIsAnimating(true);
+    setTimeout(() => setIsAnimating(false), 450);
 
-      {!loading && comments && comments.length === 0 && (
-        <p className="text-[11px] text-zinc-500 mb-2">لا توجد تعليقات بعد، كن أول من يعلّق.</p>
-      )}
-
-      <div className="space-y-2.5 max-h-72 overflow-y-auto no-scrollbar w-full">
-        {(comments ?? []).map((item) => (
-          <div key={item.id} className="flex items-start gap-2 w-full min-w-0">
-            <Avatar profile={item.author} />
-            <div className="min-w-0 flex-1 rounded-xl bg-zinc-950/70 border border-zinc-800/70 px-2.5 py-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <Link href={`/profile/${item.user_id}`} className="text-[11px] font-bold text-white truncate">
-                  {displayName(item.author)}
-                </Link>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <time className="text-[9px] text-zinc-500">{formatDate(item.created_at)}</time>
-                  {item.user_id === currentUserId && (
-                    <button
-                      type="button"
-                      onClick={() => void remove(item.id)}
-                      className="text-zinc-600 hover:text-red-400 transition"
-                      title="حذف التعليق"
-                    >
-                      <Trash2 size={11} />
-                    </button>
-                  )}
-                </div>
-              </div>
-              <p className="text-[11px] text-zinc-200 whitespace-pre-line break-words mt-0.5">{item.content}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <form className="flex gap-1.5 mt-2.5 w-full" onSubmit={submit}>
-        <input
-          className="bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-white w-full outline-none focus:border-zinc-600"
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          placeholder="اكتب تعليقاً..."
-          maxLength={2000}
-        />
-        <button
-          className="button-primary text-xs px-3 py-1.5 shrink-0 flex items-center gap-1"
-          type="submit"
-          disabled={sending || !text.trim()}
-        >
-          {sending ? <Loader2 size={13} className="animate-spin" /> : <SendHorizontal size={13} />}
-          نشر
-        </button>
-      </form>
-    </div>
-  );
-}
-
-// --- نافذة المشاركة: إرسال المنشور إلى صديق أو عبر التطبيقات ---
-const SHARE_RELATION_LABEL: Record<ShareFriendRelation, string> = {
-  friend: 'صديق',
-  following: 'تتابعه',
-  follower: 'يتابعك',
-  suggested: 'على آني',
-};
-
-function ShareSheet({
-  post,
-  currentUserId,
-  open,
-  onClose,
-}: {
-  post: Post;
-  currentUserId: string;
-  open: boolean;
-  onClose: () => void;
-}) {
-  const [friends, setFriends] = useState<ShareFriend[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [query, setQuery] = useState('');
-  const [note, setNote] = useState('');
-  const [sendingTo, setSendingTo] = useState<string | null>(null);
-  const [sentTo, setSentTo] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
-    if (!open) return;
-    setSentTo({});
-    setNote('');
-    setQuery('');
-    let cancelled = false;
-    setLoading(true);
-    void loadShareFriends(currentUserId)
-      .then((rows) => {
-        if (!cancelled) setFriends(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setFriends([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, currentUserId]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [open, onClose]);
-
-  if (!open) return null;
-
-  const visibleFriends = query.trim()
-    ? friends.filter((friend) =>
-        `${friend.name} ${friend.username}`.toLowerCase().includes(query.trim().toLowerCase()),
-      )
-    : friends;
-
-  const handleSend = async (friend: ShareFriend) => {
-    if (sendingTo) return;
-    setSendingTo(friend.id);
-    const result = await sendPostToFriend(post, currentUserId, friend.id, note);
-    setSendingTo(null);
-    if (result.ok) {
-      setSentTo((previous) => ({ ...previous, [friend.id]: true }));
-      toast.success(`تم إرسال المنشور إلى ${friend.name}`);
-    } else {
-      toast.error(result.message);
+    if (!supabaseConfigured) {
+      setLiked(prevLiked);
+      setLikesCount(prevCount);
+      return;
+    }
+    try {
+      if (prevLiked) {
+        const { error } = await supabase.from('likes').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('likes').insert({ post_id: post.id, user_id: currentUserId });
+        if (error) throw error;
+      }
+    } catch {
+      setLiked(prevLiked);
+      setLikesCount(prevCount);
     }
   };
 
-  const handleChannel = (channel: ShareChannel) => {
-    sharePostToApp(channel, post);
-    void recordShare(post, currentUserId);
-    onClose();
-  };
+  const toggleRepost = async () => {
+    const prevReposted = reposted;
+    const prevCount = repostsCount;
+    const nextReposted = !prevReposted;
+    setReposted(nextReposted);
+    setRepostsCount(prevCount + (nextReposted ? 1 : -1));
 
-  const handleCopy = async () => {
-    const copied = await copyPostLink(post, currentUserId);
-    if (copied) onClose();
-  };
-
-  const handleNativeShare = async () => {
-    await sharePost(post, currentUserId);
-    onClose();
-  };
-
-  const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
-
-  const channels: Array<{ id: ShareChannel; label: string; node: ReactNode; className: string }> = [
-    { id: 'whatsapp', label: 'واتساب', node: <MessageCircle size={20} />, className: 'text-emerald-400 bg-emerald-500/10' },
-    { id: 'telegram', label: 'تيليجرام', node: <Send size={20} />, className: 'text-sky-400 bg-sky-500/10' },
-    { id: 'x', label: 'X', node: <span className="text-[17px] font-black">X</span>, className: 'text-zinc-100 bg-zinc-700/40' },
-    { id: 'facebook', label: 'فيسبوك', node: <span className="text-[19px] font-black">f</span>, className: 'text-blue-400 bg-blue-500/10' },
-    { id: 'email', label: 'بريد', node: <Mail size={20} />, className: 'text-amber-400 bg-amber-500/10' },
-    { id: 'sms', label: 'رسالة', node: <MessageSquare size={20} />, className: 'text-lime-400 bg-lime-500/10' },
-  ];
-
-  return (
-    <div
-      className="modal-overlay fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label="مشاركة المنشور"
-    >
-      <div
-        className="w-full sm:max-w-md max-h-[88vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl border border-zinc-800 bg-zinc-950 p-4 text-white shadow-2xl"
-        dir="rtl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-zinc-800 pb-2 mb-3">
-          <h3 className="text-sm font-bold flex items-center gap-1.5">
-            <Share2 size={16} className="text-purple-400" /> مشاركة المنشور
-          </h3>
-          <button type="button" onClick={onClose} aria-label="إغلاق" className="text-zinc-400 hover:text-white">
-            <X size={18} />
-          </button>
-        </div>
-
-        <p className="text-[11px] text-zinc-400 mb-2 leading-relaxed">
-          {postShareText(post)}
-        </p>
-
-        <textarea
-          value={note}
-          onChange={(event) => setNote(event.target.value)}
-          maxLength={200}
-          rows={2}
-          placeholder="أضف رسالة مع المنشور (اختياري)"
-          className="w-full resize-none rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] text-zinc-100 placeholder:text-zinc-500 focus:border-purple-500 focus:outline-none"
-        />
-
-        {/* إرسال إلى شخص */}
-        <div className="mt-4">
-          <div className="flex items-center justify-between mb-2">
-            <strong className="text-[11px] text-zinc-300">إرسال إلى</strong>
-            {friends.length > 3 && (
-              <div className="relative">
-                <Search size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500" />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="ابحث عن شخص"
-                  className="w-32 rounded-lg border border-zinc-800 bg-zinc-900 py-1 pr-6 pl-2 text-[10px] focus:border-purple-500 focus:outline-none"
-                />
-              </div>
-            )}
-          </div>
-
-          {loading && (
-            <div className="flex items-center justify-center py-6 text-zinc-500">
-              <Loader2 size={18} className="animate-spin" />
-            </div>
-          )}
-
-          {!loading && visibleFriends.length === 0 && (
-            <p className="rounded-xl border border-dashed border-zinc-800 px-3 py-3 text-[11px] text-zinc-500">
-              {query.trim()
-                ? 'لا يوجد شخص بهذا الاسم.'
-                : 'لا يوجد مستخدمون آخرون بعد. يمكنك مشاركة الرابط عبر التطبيقات أدناه.'}
-            </p>
-          )}
-
-          {!loading && visibleFriends.length > 0 && (
-            <div className="max-h-52 space-y-1 overflow-y-auto pr-0.5">
-              {visibleFriends.map((friend) => {
-                const sent = sentTo[friend.id];
-                return (
-                  <div key={friend.id} className="flex items-center justify-between gap-2 rounded-xl px-1.5 py-1.5 hover:bg-zinc-900">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Avatar profile={{ full_name: friend.name, username: friend.username, avatar_url: friend.avatar_url }} />
-                      <div className="min-w-0">
-                        <strong className="block truncate text-[11px] text-white">{friend.name}</strong>
-                        <span className="block truncate text-[10px] text-zinc-500">
-                          @{friend.username} · {SHARE_RELATION_LABEL[friend.relation]}
-                        </span>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleSend(friend)}
-                      disabled={sendingTo === friend.id || sent}
-                      className={`shrink-0 rounded-full px-3 py-1 text-[10px] font-bold transition active:scale-95 ${
-                        sent
-                          ? 'bg-emerald-500/15 text-emerald-400'
-                          : 'bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-60'
-                      }`}
-                    >
-                      {sendingTo === friend.id ? (
-                        <Loader2 size={12} className="animate-spin" />
-                      ) : sent ? (
-                        <span className="flex items-center gap-1"><Check size={12} /> تم</span>
-                      ) : (
-                        'إرسال'
-                      )}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* مشاركة عبر التطبيقات */}
-        <div className="mt-4 border-t border-zinc-800 pt-3">
-          <strong className="text-[11px] text-zinc-300 mb-2 block">مشاركة عبر</strong>
-          <div className="grid grid-cols-4 gap-2">
-            {channels.map((channel) => (
-              <button
-                key={channel.id}
-                type="button"
-                onClick={() => handleChannel(channel.id)}
-                className="flex flex-col items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-900/60 px-1 py-2 text-[10px] text-zinc-300 transition hover:border-zinc-700 active:scale-95"
-              >
-                <span className={`flex h-8 w-8 items-center justify-center rounded-full ${channel.className}`}>
-                  {channel.node}
-                </span>
-                {channel.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={() => void handleCopy()}
-              className="flex flex-col items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-900/60 px-1 py-2 text-[10px] text-zinc-300 transition hover:border-zinc-700 active:scale-95"
-            >
-              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-500/10 text-purple-400">
-                <Copy size={18} />
-              </span>
-              نسخ الرابط
-            </button>
-            {canNativeShare && (
-              <button
-                type="button"
-                onClick={() => void handleNativeShare()}
-                className="flex flex-col items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-900/60 px-1 py-2 text-[10px] text-zinc-300 transition hover:border-zinc-700 active:scale-95"
-              >
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-700/40 text-zinc-100">
-                  <Share2 size={18} />
-                </span>
-                المزيد
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PostCard({
-  post,
-  currentUserId,
-  profile,
-  onRefresh,
-}: {
-  post: Post;
-  currentUserId: string;
-  profile?: Profile | null;
-  onRefresh: () => void;
-}) {
-  const [showComments, setShowComments] = useState(false);
-  const [showShare, setShowShare] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const interactions = usePostInteractions(post, currentUserId);
-  const controls = usePostControls(post, currentUserId);
-  const commentsDisabled = controls.commentsDisabled;
-  const liked = interactions.liked;
-
-  const isOwner = post.user_id === currentUserId;
-  const isMediaPost = post.type === 'photo' || post.type === 'reel';
-
-  // --- post action menu (Edit / Delete / Report / Copy link) ---
-  const [showMenu, setShowMenu] = useState(false);
-  const [showEdit, setShowEdit] = useState(false);
-  const [editContent, setEditContent] = useState(post.content ?? '');
-  const [editFile, setEditFile] = useState<File | null>(null);
-  const [savingEdit, setSavingEdit] = useState(false);
-  const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [savingAudio, setSavingAudio] = useState(false);
-  const [showReport, setShowReport] = useState(false);
-  const [reportReason, setReportReason] = useState('محتوى غير مناسب');
-  const [reportDetails, setReportDetails] = useState('');
-  const [reporting, setReporting] = useState(false);
-  const [showAudio, setShowAudio] = useState(false);
-  const [audioPlaying, setAudioPlaying] = useState(false);
-  const [audioProgress, setAudioProgress] = useState(0);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!showMenu) return;
-    const closeOnOutsideClick = (event: MouseEvent | TouchEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setShowMenu(false);
+    if (!supabaseConfigured) {
+      setReposted(prevReposted);
+      setRepostsCount(prevCount);
+      return;
+    }
+    try {
+      if (prevReposted) {
+        const { error } = await supabase.from('reposts').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('reposts').insert({ post_id: post.id, user_id: currentUserId });
+        if (error) throw error;
       }
-    };
-    document.addEventListener('mousedown', closeOnOutsideClick);
-    document.addEventListener('touchstart', closeOnOutsideClick);
-    return () => {
-      document.removeEventListener('mousedown', closeOnOutsideClick);
-      document.removeEventListener('touchstart', closeOnOutsideClick);
-    };
-  }, [showMenu]);
+    } catch {
+      setReposted(prevReposted);
+      setRepostsCount(prevCount);
+    }
+  };
+
+  const toggleBookmark = async () => {
+    const prevBookmarked = bookmarked;
+    setBookmarked(!prevBookmarked);
+
+    if (!supabaseConfigured) {
+      setBookmarked(prevBookmarked);
+      return;
+    }
+    try {
+      if (prevBookmarked) {
+        const { error } = await supabase.from('bookmarks').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('bookmarks').insert({ post_id: post.id, user_id: currentUserId });
+        if (error) throw error;
+      }
+    } catch {
+      setBookmarked(prevBookmarked);
+    }
+  };
+
+  const handleShare = async () => {
+    const shareUrl = `${window.location.origin}/post/${post.id}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'منشور على آني', url: shareUrl }); } catch {}
+    } else {
+      await navigator.clipboard.writeText(shareUrl);
+      alert('تم نسخ رابط المنشور للمشاركة!');
+    }
+  };
+
+  const loadComments = async () => {
+    if (!supabaseConfigured) return;
+    setBusy(true);
+    const { data } = await supabase.from('comments').select('id,post_id,user_id,content,created_at,author:profiles(id,username,full_name,avatar_url)').eq('post_id', post.id).order('created_at', { ascending: true });
+    setComments(data || []);
+    setBusy(false);
+  };
+
+  const addComment = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabaseConfigured || !commentText.trim()) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase.from('comments').insert({ post_id: post.id, user_id: currentUserId, content: commentText.trim() });
+      if (error) throw error;
+      setCommentText('');
+      setCommentsCount(count => count + 1);
+      await loadComments();
+    } catch {
+      alert('تعذر نشر التعليق. حاول مرة أخرى.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveEdit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabaseConfigured || busy) return;
+    const content = editContent.trim();
+    if (post.type === 'text' && !content) {
+      alert('لا يمكن أن يكون المنشور النصي فارغًا.');
+      return;
+    }
+
+    setBusy(true);
+    try {
+      let mediaUrl = post.media_url;
+      let mediaUrls = post.media_urls?.length ? post.media_urls : (post.media_url ? [post.media_url] : []);
+      if (replacementFile) {
+        const expectedType = post.type === 'photo' ? 'image/' : 'video/';
+        if (!replacementFile.type.startsWith(expectedType)) {
+          throw new Error(post.type === 'photo' ? 'اختر صورة بدلًا من الفيديو.' : 'اختر فيديو بدلًا من الصورة.');
+        }
+        const safeName = replacementFile.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+        const path = `${currentUserId}/${Date.now()}-${safeName}`;
+        const { error: uploadError } = await supabase.storage.from(storageBucket).upload(path, replacementFile, {
+          upsert: true,
+          contentType: replacementFile.type,
+        });
+        if (uploadError) throw uploadError;
+        mediaUrl = supabase.storage.from(storageBucket).getPublicUrl(path).data.publicUrl;
+        mediaUrls = [mediaUrl];
+      }
+
+      const { error } = await supabase.from('posts').update({
+        content,
+        media_url: post.type === 'text' ? null : mediaUrl,
+        media_urls: post.type === 'text' ? null : mediaUrls,
+      }).eq('id', post.id).eq('user_id', currentUserId);
+      if (error) throw error;
+      setShowEditModal(false);
+      setReplacementFile(null);
+      onRefresh();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'تعذر تعديل المنشور. حاول مرة أخرى.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveFeedback = async (value: 'interested' | 'not_interested') => {
+    if (!supabaseConfigured) return;
+    const previousFeedback = feedback;
+    const nextFeedback = previousFeedback === value ? null : value;
+    setFeedback(nextFeedback);
+    try {
+      const result = nextFeedback
+        ? await supabase.from('post_feedback').upsert({ post_id: post.id, user_id: currentUserId, feedback: nextFeedback }, { onConflict: 'post_id,user_id' })
+        : await supabase.from('post_feedback').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+      if (result.error) throw result.error;
+    } catch {
+      setFeedback(previousFeedback);
+      alert('تعذر حفظ اختيارك. حاول مرة أخرى.');
+    }
+  };
+
+  const reportPost = async () => {
+    const reason = window.prompt('ما سبب الإبلاغ عن هذا المنشور؟');
+    if (!reason?.trim() || !supabaseConfigured) return;
+    const { error } = await supabase.from('post_reports').insert({
+      post_id: post.id,
+      reporter_id: currentUserId,
+      reason: reason.trim(),
+    });
+    if (error) {
+      alert(error.code === '23505' ? 'سبق أن أبلغت عن هذا المنشور.' : 'تعذر إرسال البلاغ. حاول مرة أخرى.');
+      return;
+    }
+    alert('تم إرسال البلاغ للمراجعة.');
+  };
 
   const handleDeletePost = async () => {
     if (!supabaseConfigured) return;
-    if (!confirm('هل أنت متأكد من رغبتك في حذف هذا المنشور؟')) return;
-    setDeleting(true);
-    const { error } = await supabase.from('posts').delete().eq('id', post.id);
-    setDeleting(false);
-    if (error) {
-      toast.error('تعذر حذف المنشور');
-      return;
-    }
-    toast.success('تم حذف المنشور');
-    onRefresh();
-  };
-
-  const openEditModal = () => {
-    setEditContent(post.content ?? '');
-    setEditFile(null);
-    setShowMenu(false);
-    setShowEdit(true);
-  };
-
-  const handleSaveEdit = async () => {
-    if (!supabaseConfigured || savingEdit) return;
-    const nextContent = editContent.trim();
-    if (!nextContent && !post.media_url && !editFile) {
-      toast.error('لا يمكن حفظ منشور فارغ');
-      return;
-    }
-
-    setSavingEdit(true);
-    try {
-      let mediaUrl = post.media_url;
-
-      if (editFile) {
-        const safeName = editFile.name.replace(/[^a-zA-Z0-9._-]/g, '-');
-        const path = `${currentUserId}/post-${post.id}-${Date.now()}-${safeName}`;
-        const { error: uploadError } = await supabase.storage
-          .from(storageBucket)
-          .upload(path, editFile, { upsert: true, contentType: editFile.type });
-        if (uploadError) throw uploadError;
-        mediaUrl = supabase.storage.from(storageBucket).getPublicUrl(path).data.publicUrl;
-      }
-
-      const { error } = await supabase
-        .from('posts')
-        .update({ content: nextContent, media_url: mediaUrl, updated_at: new Date().toISOString() })
-        .eq('id', post.id);
-      if (error) throw error;
-
-      toast.success('تم تحديث المنشور');
-      setShowEdit(false);
-      setEditFile(null);
-      onRefresh();
-    } catch (reason) {
-      if (reason instanceof Error) toast.error(reason.message);
-      else if (typeof reason === 'object' && reason && 'message' in reason) {
-        toast.error(String((reason as { message?: string }).message));
-      } else {
-        toast.error('تعذر تحديث المنشور');
-      }
-    } finally {
-      setSavingEdit(false);
-    }
-  };
-
-  const handleSaveAudio = async () => {
-    if (savingAudio) return;
-    setSavingAudio(true);
-    try {
-      if (!audioFile) {
-        await controls.changeAudio(null);
-        setShowAudio(false);
+    if (confirm('هل أنت تأكد من رغبتك في حذف هذا المنشور؟')) {
+      const { error } = await supabase.from('posts').delete().eq('id', post.id).eq('user_id', currentUserId);
+      if (error) {
+        alert('تعذر حذف المنشور. حاول مرة أخرى.');
         return;
       }
-      const audio = await uploadPostAudio(audioFile, currentUserId, post.id);
-      await controls.changeAudio(audio);
-      setShowAudio(false);
-      setAudioFile(null);
-    } catch (reason) {
-      if (reason instanceof Error) toast.error(reason.message);
-      else toast.error('تعذر تحديث المقطع الصوتي');
-    } finally {
-      setSavingAudio(false);
-    }
-  };
-
-  const handleCopyLink = async () => {
-    setShowMenu(false);
-    const url = `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/post/${post.id}`;
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(url);
-      } else {
-        const area = document.createElement('textarea');
-        area.value = url;
-        area.setAttribute('readonly', '');
-        area.style.position = 'fixed';
-        area.style.opacity = '0';
-        document.body.appendChild(area);
-        area.select();
-        document.execCommand('copy');
-        document.body.removeChild(area);
-      }
-      toast.success('تم نسخ رابط المنشور');
-    } catch {
-      toast.error('تعذر نسخ الرابط');
-    }
-  };
-
-  const submitReport = async () => {
-    if (!supabaseConfigured || reporting) return;
-    setReporting(true);
-    const reason = reportDetails.trim()
-      ? `${reportReason} — ${reportDetails.trim()}`
-      : reportReason;
-
-    try {
-      // Try the migrated shape first: it carries reporter_id + status.
-      let { error } = await supabase
-        .from('reports')
-        .insert(buildReportPayload({ postId: post.id, postAuthorId: post.user_id, currentUserId, reason }));
-
-      // The live/deployed table may still be the legacy (post_id, user_id,
-      // reason) shape. Only retry when a *column* was missing — retrying after
-      // an RLS/network error would hide the real failure.
-      if (shouldRetryWithLegacyShape(error as ReportErrorLike)) {
-        ({ error } = await supabase
-          .from('reports')
-          .insert(buildLegacyReportPayload({ postId: post.id, currentUserId, reason })));
-      }
-
-      if (error) throw error;
-      toast.success('تم إرسال البلاغ، شكراً لمساعدتك في الحفاظ على آني.');
-      setShowReport(false);
-      setReportDetails('');
-    } catch (reportError) {
-      const kind = classifyReportFailure(reportError as ReportErrorLike);
-      if (kind === 'duplicate') {
-        toast.info(reportFailureMessage(kind));
-        setShowReport(false);
-      } else if (kind === 'table_missing' || kind === 'forbidden') {
-        toast.warning(reportFailureMessage(kind));
-      } else {
-        toast.error(reportFailureMessage(kind));
-      }
-    } finally {
-      setReporting(false);
+      onRefresh();
     }
   };
 
   return (
-    <article className="post-card card fade-up w-full overflow-hidden p-4 bg-zinc-900 border border-zinc-800 rounded-2xl mb-3 dir-rtl min-w-0">
-      <div className="flex items-center justify-between w-full mb-2 min-w-0">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <Avatar profile={post.author} large />
-          <div className="post-meta min-w-0 flex-1">
-            <Link href={`/profile/${post.user_id}`} className="user-link block truncate">
-              <strong className="text-white text-xs font-bold truncate block">{displayName(post.author)}</strong>
+    <article className="post-card fade-up relative">
+      <header className="flex items-start gap-3 w-full">
+        <Avatar profile={post.author} large />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Link href={`/profile/${post.user_id}`} className="hover:underline">
+              <strong className="text-white text-sm font-bold truncate block">{displayName(post.author)}</strong>
             </Link>
-            <time className="text-[10px] text-zinc-400 block">{formatDate(post.created_at)}</time>
+            <span className="text-zinc-500 text-xs truncate" dir="ltr">@{post.author?.username || 'user'}</span>
+            <span className="text-zinc-600 text-xs">·</span>
+            <time className="text-zinc-500 text-xs whitespace-nowrap">{formatDate(post.created_at)}</time>
           </div>
         </div>
-        <div className="relative shrink-0" ref={menuRef}>
-          <button
-            type="button"
-            aria-haspopup="menu"
-            aria-expanded={showMenu}
-            aria-label="خيارات المنشور"
-            className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
-            onClick={() => setShowMenu((open) => !open)}
-          >
-            <MoreVertical size={16} />
-          </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" className="absolute left-3 top-3 p-1 text-zinc-500 transition hover:text-white" aria-label="خيارات المنشور">
+              <MoreVertical size={18} />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {post.user_id === currentUserId ? (
+              <>
+                <DropdownMenuItem onSelect={() => { setEditContent(post.content || ''); setReplacementFile(null); setShowEditModal(true); }}>
+                  <Pencil size={16} /> تعديل المنشور
+                </DropdownMenuItem>
+                <DropdownMenuItem className="text-red-400 focus:text-red-400" onSelect={() => void handleDeletePost()}>
+                  <Trash2 size={16} /> حذف المنشور
+                </DropdownMenuItem>
+              </>
+            ) : (
+              <>
+                <DropdownMenuItem className="text-red-400 focus:text-red-400" onSelect={() => void reportPost()}>
+                  <Flag size={16} /> إبلاغ عن المنشور
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => void saveFeedback('interested')}>
+                  <ThumbsUp size={16} /> {feedback === 'interested' ? 'إلغاء مهتم' : 'مهتم'}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => void saveFeedback('not_interested')}>
+                  <EyeOff size={16} /> {feedback === 'not_interested' ? 'إلغاء غير مهتم' : 'غير مهتم'}
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </header>
 
-          {showMenu && (
-            <div
-              role="menu"
-              className="absolute left-0 z-40 mt-1 w-56 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-950/95 py-1 text-[11px] shadow-2xl backdrop-blur"
-            >
-              {isOwner ? (
-                <>
-                  <p className="px-3 pb-1 pt-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-500">
-                    إدارة المنشور
-                  </p>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={openEditModal}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-start text-zinc-200 transition hover:bg-zinc-800"
-                  >
-                    {post.type === 'reel' ? <Video size={13} /> : post.type === 'photo' ? <ImagePlus size={13} /> : <Edit3 size={13} />}
-                    {post.type === 'reel'
-                      ? 'استبدال الفيديو / النص'
-                      : post.type === 'photo'
-                        ? 'استبدال الصورة / النص'
-                        : 'تعديل النص'}
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setShowMenu(false);
-                      setAudioFile(null);
-                      setShowAudio(true);
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-start text-zinc-200 transition hover:bg-zinc-800"
-                  >
-                    <Music size={13} /> {controls.audio ? 'تغيير المقطع الصوتي' : 'إضافة موسيقى / صوت'}
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setShowMenu(false);
-                      void controls.toggleComments();
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-start text-zinc-200 transition hover:bg-zinc-800"
-                  >
-                    <MessageSquare size={13} />
-                    {commentsDisabled ? 'فتح التعليقات' : 'إغلاق التعليقات'}
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => void handleCopyLink()}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-start text-zinc-200 transition hover:bg-zinc-800"
-                  >
-                    <Link2 size={13} /> نسخ رابط المنشور
-                  </button>
-                  <div className="my-1 h-px bg-zinc-800" />
-                  <button
-                    type="button"
-                    role="menuitem"
-                    disabled={deleting}
-                    onClick={() => {
-                      setShowMenu(false);
-                      void handleDeletePost();
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-start text-red-400 transition hover:bg-red-500/10 disabled:opacity-60"
-                  >
-                    {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                    حذف المنشور
-                  </button>
-                </>
-              ) : (
-                <>
-                  <p className="px-3 pb-1 pt-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-500">
-                    تخصيص المحتوى
-                  </p>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    aria-pressed={controls.feedback === 'interested'}
-                    onClick={() => {
-                      setShowMenu(false);
-                      void controls.setFeedback('interested');
-                    }}
-                    className={`flex w-full items-center gap-2 px-3 py-2 text-start transition hover:bg-zinc-800 ${
-                      controls.feedback === 'interested' ? 'font-bold text-pink-400' : 'text-zinc-200'
-                    }`}
-                  >
-                    <Star size={13} fill={controls.feedback === 'interested' ? 'currentColor' : 'none'} />
-                    مهتم
-                    {controls.feedback === 'interested' && <Check size={12} className="ms-auto" />}
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    aria-pressed={controls.feedback === 'not_interested'}
-                    onClick={() => {
-                      setShowMenu(false);
-                      void controls.setFeedback('not_interested');
-                    }}
-                    className={`flex w-full items-center gap-2 px-3 py-2 text-start transition hover:bg-zinc-800 ${
-                      controls.feedback === 'not_interested' ? 'font-bold text-zinc-100' : 'text-zinc-200'
-                    }`}
-                  >
-                    <X size={13} />
-                    غير مهتم
-                    {controls.feedback === 'not_interested' && <Check size={12} className="ms-auto" />}
-                  </button>
-                  <p className="px-3 pb-1.5 pt-0.5 text-[10px] leading-relaxed text-zinc-500">
-                    يساعدنا هذا في تحسين ما يظهر لك.
-                  </p>
-                  <div className="my-1 h-px bg-zinc-800" />
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => void handleCopyLink()}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-start text-zinc-200 transition hover:bg-zinc-800"
-                  >
-                    <Link2 size={13} /> نسخ رابط المنشور
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => setShowShare(true)}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-start text-zinc-200 transition hover:bg-zinc-800"
-                  >
-                    <Send size={13} /> إرسال إلى صديق
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setShowMenu(false);
-                      setShowReport(true);
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-start text-amber-300 transition hover:bg-amber-500/10"
-                  >
-                    <Flag size={13} /> إبلاغ عن المنشور
-                  </button>
-                </>
-              )}
-            </div>
+      {post.content && (
+        <p className="post-content text-sm text-zinc-200 mt-2.5 leading-relaxed">
+          {post.content}
+        </p>
+      )}
+
+      {/* معرض الصور التمريري (Carousel Slider) */}
+      {urls.length > 0 && (
+        <div className="relative mt-3 rounded-xl overflow-hidden border border-zinc-800">
+          <div ref={trackRef} onScroll={handleScroll} className="carousel-track">
+            {urls.map((url, i) => (
+              <div key={i} className="carousel-slide">
+                {post.type === 'reel' ? (
+                  <video src={url} controls className="w-full max-h-[28rem] object-cover" />
+                ) : (
+                  <img src={url} alt="" className="w-full max-h-[28rem] object-cover select-none" />
+                )}
+              </div>
+            ))}
+          </div>
+
+          {urls.length > 1 && (
+            <>
+              <div className="absolute bottom-2 inset-x-0 flex justify-center pointer-events-auto">
+                <div className="dots bg-black/50 backdrop-blur px-2 py-1 rounded-full">
+                  {urls.map((_, i) => (
+                    <button key={i} onClick={() => goToImage(i)} className={`dot ${i === currentImageIndex ? 'active' : ''}`} />
+                  ))}
+                </div>
+              </div>
+              <div className="absolute top-2 left-2 text-[10px] bg-black/60 text-white px-2 py-0.5 rounded-full backdrop-blur">
+                {currentImageIndex + 1}/{urls.length}
+              </div>
+            </>
           )}
         </div>
-      </div>
-
-      {post.reposted_at && (
-        <div className="mb-2 flex items-center gap-1.5 text-[10px] font-medium text-emerald-400/90">
-          <Repeat size={12} />
-          {post.repost_attribution
-            ? `أعاد ${displayName(post.repost_attribution)} نشر هذا المنشور`
-            : 'إعادة نشر'}
-        </div>
       )}
 
-      <div className="post-body w-full min-w-0">
-        {post.content && (
-          <p className="text-xs my-2 text-zinc-200 whitespace-pre-line leading-relaxed break-words min-w-0 overflow-wrap-anywhere">
-            {post.content}
-          </p>
-        )}
-
-        {post.media_url && (post.type === 'reel'
-          ? <video className="media-post rounded-xl mt-2 max-h-96 w-full object-cover" src={post.media_url} controls playsInline preload="metadata" />
-          : <img className="media-post rounded-xl mt-2 max-h-96 w-full object-cover" src={post.media_url} alt="" />)}
-
-        {controls.audio && (
-          <div className="mt-2 flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950/80 p-2">
-            <button
-              type="button"
-              onClick={() => setAudioPlaying((playing) => !playing)}
-              aria-label={audioPlaying ? 'إيقاف المقطع الصوتي' : 'تشغيل المقطع الصوتي'}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-pink-500 text-black"
-            >
-              {audioPlaying ? <Pause size={13} /> : <Play size={13} />}
-            </button>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[10px] font-bold text-zinc-200">{controls.audio.title}</p>
-              <div className="relative mt-1 h-1 overflow-hidden rounded-full bg-zinc-800">
-                <div
-                  className="absolute inset-y-0 start-0 rounded-full bg-pink-500 transition-all"
-                  style={{ width: `${Math.min(100, audioProgress * 100)}%` }}
-                />
-              </div>
-            </div>
-            <Music size={13} className="shrink-0 text-pink-400" />
-            <audio
-              ref={audioRef}
-              src={controls.audio.url}
-              preload="none"
-              onTimeUpdate={(event) => {
-                const el = event.currentTarget;
-                if (el.duration && Number.isFinite(el.duration)) {
-                  setAudioProgress(el.currentTime / el.duration);
-                }
-              }}
-              onEnded={() => {
-                setAudioPlaying(false);
-                setAudioProgress(0);
-              }}
-              className="hidden"
-            />
-          </div>
-        )}
-
-        <div className="flex items-center justify-between text-xs text-zinc-400 border-t border-zinc-800/80 pt-2.5 mt-3 w-full shrink-0 flex-nowrap gap-1">
-          <div className="flex items-center gap-3.5 shrink-0">
-            <button
-              type="button"
-              aria-pressed={liked}
-              aria-label={liked ? 'إلغاء الإعجاب' : 'إعجاب'}
-              className={`flex items-center gap-1 transition shrink-0 active:scale-90 ${liked ? 'text-pink-500 font-bold' : 'hover:text-pink-500'}`}
-              onClick={() => void interactions.toggleLike()}
-            >
-              <Heart size={18} fill={liked ? 'currentColor' : 'none'} className={liked ? 'drop-shadow-[0_0_6px_rgba(236,72,153,0.65)]' : ''} />
-              <span>{formatCount(interactions.likes)}</span>
-            </button>
-
-            <button
-              type="button"
-              aria-expanded={showComments}
-              aria-label="التعليقات"
-              className={`flex items-center gap-1 transition shrink-0 ${showComments ? 'text-blue-400' : 'hover:text-blue-400'}`}
-              onClick={() => {
-                if (commentsDisabled && !isOwner) {
-                  toast.info('التعليقات مغلقة على هذا المنشور');
-                  return;
-                }
-                setShowComments((open) => !open);
-              }}
-            >
-              <MessageSquare size={17} />
-              <span>{formatCount(interactions.comments)}</span>
-            </button>
-
-            <button
-              type="button"
-              aria-pressed={interactions.reposted}
-              aria-label="إعادة نشر"
-              className={`flex items-center gap-1 transition shrink-0 active:scale-90 ${interactions.reposted ? 'text-emerald-400 font-bold' : 'hover:text-emerald-400'}`}
-              onClick={() => void interactions.toggleRepost()}
-            >
-              <Repeat size={17} />
-              <span>{formatCount(interactions.reposts)}</span>
-            </button>
-
-            <button
-              type="button"
-              aria-label="مشاركة"
-              className={`flex items-center gap-1 transition shrink-0 active:scale-90 ${interactions.shared ? 'text-purple-400' : 'hover:text-purple-400'}`}
-              onClick={() => setShowShare(true)}
-            >
-              <Share2 size={17} />
-              <span>{formatCount(interactions.shares)}</span>
-            </button>
-          </div>
-
+      {/* شريط الأزرار المتجمع جهة اليمين */}
+      <footer className="border-t border-zinc-800/80 pt-2.5 mt-3">
+        <div className="post-actions-right flex flex-nowrap items-center gap-4 justify-start w-full overflow-x-auto">
+          {/* 1. الإعجاب */}
           <button
             type="button"
-            aria-pressed={interactions.bookmarked}
-            aria-label={interactions.bookmarked ? 'إزالة من المحفوظات' : 'حفظ المنشور'}
-            className={`transition shrink-0 active:scale-90 ${interactions.bookmarked ? 'text-amber-400' : 'hover:text-amber-400'}`}
-            onClick={() => void interactions.toggleBookmark()}
+            className={`post-action-btn flex items-center gap-1.5 ${liked ? 'liked text-rose-500 font-bold' : 'text-zinc-400'}`}
+            onClick={toggleLike}
+            aria-pressed={liked}
+            aria-label={liked ? 'إلغاء الإعجاب' : 'إعجاب'}
           >
-            <Bookmark size={18} fill={interactions.bookmarked ? 'currentColor' : 'none'} />
+            <Heart
+              size={18}
+              fill={liked ? 'currentColor' : 'none'}
+              className={`transition-transform ${isAnimating ? 'animate-heart-pulse' : ''}`}
+            />
+            <span className="text-xs">{likesCount}</span>
           </button>
+
+          {/* 2. التعليقات */}
+          <button type="button" className="post-action-btn flex items-center gap-1.5 text-zinc-400 hover:text-blue-400 transition" onClick={() => comments === null ? void loadComments() : setComments(null)}>
+            <MessageSquare size={18} />
+            <span className="text-xs">{commentsCount}</span>
+          </button>
+
+          {/* 3. إعادة النشر */}
+          <button type="button" className={`post-action-btn flex items-center gap-1.5 transition ${reposted ? 'text-emerald-400 font-bold' : 'text-zinc-400 hover:text-emerald-400'}`} onClick={toggleRepost}>
+            <Repeat size={18} />
+            <span className="text-xs">{repostsCount}</span>
+          </button>
+
+          {/* 4. المشاركة */}
+          <button type="button" className="post-action-btn flex items-center gap-1.5 text-zinc-400 hover:text-purple-400 transition" onClick={handleShare}>
+            <Send size={18} />
+          </button>
+
+          {/* 5. الحفظ */}
+          <button type="button" className={`post-action-btn flex items-center gap-1.5 transition ${bookmarked ? 'saved text-amber-400' : 'text-zinc-400 hover:text-amber-400'}`} onClick={toggleBookmark}>
+            <Bookmark size={18} fill={bookmarked ? 'currentColor' : 'none'} />
+          </button>
+
         </div>
 
-        {showComments && !commentsDisabled && (
-          <CommentsPanel post={post} currentUserId={currentUserId} profile={profile} />
-        )}
-
-        {showComments && commentsDisabled && (
-          <p className="mt-2 rounded-xl border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-[10px] text-zinc-400">
-            التعليقات مغلقة على هذا المنشور.
-          </p>
-        )}
-      </div>
-
-      {showAudio && (
-        <div className="modal-overlay" onClick={() => !savingAudio && setShowAudio(false)}>
-          <div
-            className="modal-content max-w-sm w-full bg-zinc-900 border border-zinc-800 p-4 rounded-2xl space-y-3"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
-              <h3 className="font-bold text-white text-sm flex items-center gap-1">
-                <Music size={16} className="text-pink-500" /> مقطع صوتي للمنشور
-              </h3>
-              <button type="button" onClick={() => setShowAudio(false)} aria-label="إغلاق">
-                <X size={18} className="text-zinc-400" />
-              </button>
-            </div>
-
-            {controls.audio && (
-              <div className="flex items-center gap-2 rounded-xl border border-pink-500/40 bg-pink-500/10 p-2.5">
-                <Music size={15} className="shrink-0 text-pink-400" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[11px] font-bold text-pink-200">{controls.audio.title}</p>
-                  <p className="text-[10px] text-pink-300/70">المقطع الحالي</p>
-                </div>
-                <button
-                  type="button"
-                  disabled={savingAudio}
-                  onClick={() => void handleSaveAudio()}
-                  className="shrink-0 rounded-lg px-2 py-1 text-[10px] font-bold text-red-300 hover:bg-red-500/15 disabled:opacity-60"
-                >
-                  إزالة
-                </button>
-              </div>
-            )}
-
-            <label className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 p-2.5 rounded-xl cursor-pointer hover:bg-zinc-800 text-xs text-zinc-300">
-              <Music size={16} className="text-purple-400" />
-              <span className="truncate">
-                {audioFile ? audioFile.name : controls.audio ? 'اختر مقطعاً بديلاً' : 'اختر ملفاً صوتياً'}
-              </span>
-              <input
-                type="file"
-                accept="audio/*"
-                className="hidden"
-                onChange={(event) => setAudioFile(event.target.files?.[0] ?? null)}
-              />
-            </label>
-
-            {audioFile && (
-              <audio src={URL.createObjectURL(audioFile)} controls className="w-full" />
-            )}
-
-            <p className="text-[10px] leading-relaxed text-zinc-500">
-              يُشغّل المقطع تلقائياً بشكل مصغّر أسفل المنشور، ويستطيع المشاهد تشغيله أو إيقافه.
-            </p>
-
-            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800">
-              <button
-                type="button"
-                onClick={() => setShowAudio(false)}
-                className="text-xs px-3 py-1.5 rounded-lg text-zinc-300 hover:bg-zinc-800"
-              >
-                إلغاء
-              </button>
-              <button
-                type="button"
-                disabled={savingAudio || !audioFile}
-                onClick={() => void handleSaveAudio()}
-                className="button-primary text-xs px-4 disabled:opacity-60"
-              >
-                {savingAudio ? 'جاري الحفظ...' : 'حفظ المقطع'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showEdit && (
-        <div className="modal-overlay" onClick={() => !savingEdit && setShowEdit(false)}>
-          <div
-            className="modal-content max-w-sm w-full bg-zinc-900 border border-zinc-800 p-4 rounded-2xl space-y-3"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
-              <h3 className="font-bold text-white text-sm flex items-center gap-1">
-                <Edit3 size={16} className="text-pink-500" /> تعديل المنشور
-              </h3>
-              <button type="button" onClick={() => setShowEdit(false)} aria-label="إغلاق">
-                <X size={18} className="text-zinc-400" />
-              </button>
-            </div>
-
-            <textarea
-              value={editContent}
-              onChange={(event) => setEditContent(event.target.value)}
-              rows={4}
-              className="w-full bg-zinc-950 border border-zinc-800 p-2.5 rounded-xl text-xs text-white outline-none resize-none"
-              placeholder="اكتب شيئاً..."
-            />
-
-            {isMediaPost ? (
-              <label className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 p-2.5 rounded-xl cursor-pointer hover:bg-zinc-800 text-xs text-zinc-300">
-                {post.type === 'reel' ? (
-                  <Video size={16} className="text-purple-400" />
-                ) : (
-                  <ImagePlus size={16} className="text-purple-400" />
-                )}
-                <span className="truncate">
-                  {editFile
-                    ? editFile.name
-                    : post.type === 'reel'
-                      ? 'استبدال الفيديو الحالي (اختياري)'
-                      : 'استبدال الصورة الحالية (اختياري)'}
-                </span>
-                <input
-                  type="file"
-                  accept={post.type === 'reel' ? 'video/*' : 'image/*'}
-                  className="hidden"
-                  onChange={(event) => setEditFile(event.target.files?.[0] ?? null)}
-                />
-              </label>
-            ) : (
-              <p className="text-[10px] leading-relaxed text-zinc-500">
-                منشور نصي — يمكنك تعديل النص فقط.
+        {comments && (
+          <div className="comments-list mt-3 border-t border-zinc-800/40 pt-2 w-full">
+            {busy && <p className="muted text-xs text-zinc-500">جاري تحميل التعليقات...</p>}
+            {comments.map(c => (
+              <p key={c.id} className="text-xs mb-1.5 text-zinc-300 break-words">
+                <b className="text-white ml-1">{displayName(normalizeProfile(c.author))}:</b> {c.content}
               </p>
+            ))}
+            <form className="comment-form flex gap-1.5 mt-2 w-full" onSubmit={addComment}>
+              <input className="bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-white w-full outline-none" value={commentText} onChange={e => setCommentText(e.target.value)} placeholder="إضافة تعليق..." />
+              <button className="button-primary text-xs px-3 py-1 shrink-0" type="submit" disabled={busy || !commentText.trim()}>نشر</button>
+            </form>
+          </div>
+        )}
+      </footer>
+
+      {showEditModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-labelledby={`edit-post-${post.id}`}>
+          <form onSubmit={saveEdit} className="w-full max-w-lg space-y-4 rounded-xl border border-zinc-700 bg-zinc-950 p-5 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h2 id={`edit-post-${post.id}`} className="text-base font-bold text-white">تعديل المنشور</h2>
+              <button type="button" onClick={() => setShowEditModal(false)} className="p-1 text-zinc-400 hover:text-white" aria-label="إغلاق"><X size={18} /></button>
+            </div>
+            <textarea value={editContent} onChange={event => setEditContent(event.target.value)} maxLength={2000} rows={5} className="w-full resize-y rounded-lg border border-zinc-700 bg-black p-3 text-sm text-white outline-none focus:border-pink-500" placeholder="اكتب نص المنشور..." />
+            {post.type !== 'text' && (
+              <label className="block text-sm text-zinc-300">
+                استبدال {post.type === 'photo' ? 'الصورة' : 'الفيديو'} بملف من النوع نفسه
+                <input className="mt-2 block w-full text-xs text-zinc-400" type="file" accept={post.type === 'photo' ? 'image/*' : 'video/*'} onChange={event => setReplacementFile(event.target.files?.[0] || null)} />
+              </label>
             )}
-
-            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800">
-              <button
-                type="button"
-                onClick={() => setShowEdit(false)}
-                className="text-xs px-3 py-1.5 rounded-lg text-zinc-300 hover:bg-zinc-800"
-              >
-                إلغاء
-              </button>
-              <button
-                type="button"
-                disabled={savingEdit}
-                onClick={() => void handleSaveEdit()}
-                className="button-primary text-xs px-4"
-              >
-                {savingEdit ? 'جاري الحفظ...' : 'حفظ التغييرات'}
-              </button>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="button-secondary text-xs" onClick={() => setShowEditModal(false)}>إلغاء</button>
+              <button type="submit" className="button-primary px-4 text-xs" disabled={busy}>{busy ? 'جارٍ الحفظ...' : 'حفظ التعديلات'}</button>
             </div>
-          </div>
+          </form>
         </div>
       )}
-
-      {showReport && (
-        <div className="modal-overlay" onClick={() => !reporting && setShowReport(false)}>
-          <div
-            className="modal-content max-w-sm w-full bg-zinc-900 border border-zinc-800 p-4 rounded-2xl space-y-3"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
-              <h3 className="font-bold text-white text-sm flex items-center gap-1">
-                <Flag size={16} className="text-amber-400" /> إبلاغ عن المنشور
-              </h3>
-              <button type="button" onClick={() => setShowReport(false)} aria-label="إغلاق">
-                <X size={18} className="text-zinc-400" />
-              </button>
-            </div>
-
-            <div className="space-y-1.5">
-              {['محتوى غير مناسب', 'خطاب كراهية أو تحريض', 'انتحال شخصية', 'معلومات مضللة', 'رسائل مزعجة'].map(
-                (option) => (
-                  <label
-                    key={option}
-                    className={`flex items-center gap-2 rounded-xl border p-2 text-[11px] cursor-pointer transition ${
-                      reportReason === option
-                        ? 'border-amber-400/60 bg-amber-400/10 text-amber-200'
-                        : 'border-zinc-800 bg-zinc-950 text-zinc-300 hover:bg-zinc-800'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name={`report-${post.id}`}
-                      value={option}
-                      checked={reportReason === option}
-                      onChange={() => setReportReason(option)}
-                      className="accent-amber-400"
-                    />
-                    {option}
-                  </label>
-                ),
-              )}
-            </div>
-
-            <textarea
-              value={reportDetails}
-              onChange={(event) => setReportDetails(event.target.value)}
-              rows={2}
-              className="w-full bg-zinc-950 border border-zinc-800 p-2.5 rounded-xl text-xs text-white outline-none resize-none"
-              placeholder="تفاصيل إضافية (اختياري)"
-            />
-
-            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800">
-              <button
-                type="button"
-                onClick={() => setShowReport(false)}
-                className="text-xs px-3 py-1.5 rounded-lg text-zinc-300 hover:bg-zinc-800"
-              >
-                إلغاء
-              </button>
-              <button
-                type="button"
-                disabled={reporting}
-                onClick={() => void submitReport()}
-                className="text-xs px-4 py-1.5 rounded-lg bg-amber-500 text-black font-bold hover:bg-amber-400 disabled:opacity-60"
-              >
-                {reporting ? 'جاري الإرسال...' : 'إرسال البلاغ'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <ShareSheet
-        post={post}
-        currentUserId={currentUserId}
-        open={showShare}
-        onClose={() => setShowShare(false)}
-      />
     </article>
   );
 }
 
-// --- Hook الجلب الموحد للمنشورات والريلز ---
-/**
- * A profile feed shows the posts a user authored plus the posts they reposted.
- * Reposts are stored in `reposts` (post_id + user_id) and are merged in here,
- * newest activity first, tagged with `reposted_at` + `reposter_id` so the card
- * can show "أعاد النشر".
- */
-async function mergeProfileReposts(
-  authored: Record<string, any>[],
-  profileUserId: string,
-): Promise<Record<string, any>[]> {
-  const { data: repostRows, error } = await supabase
-    .from('reposts')
-    .select('post_id, created_at, user_id')
-    .eq('user_id', profileUserId)
-    .order('created_at', { ascending: false });
+// --- Hook الجلب الموحد ---
+async function hydratePostInteractions(posts: Post[], currentUserId: string): Promise<Post[]> {
+  if (!supabaseConfigured || posts.length === 0) return posts;
 
-  if (error || !repostRows?.length) return authored;
-
-  const authoredIds = new Set(authored.map((row) => String(row.id)));
-  const repostedIds = Array.from(
-    new Set(
-      repostRows
-        .map((row) => String(row.post_id ?? ''))
-        .filter((id) => id && !authoredIds.has(id)),
-    ),
-  );
-
-  let repostedRows: Record<string, any>[] = [];
-  if (repostedIds.length) {
-    const { data: postRows } = await supabase
-      .from('posts')
-      .select('*')
-      .in('id', repostedIds);
-    repostedRows = (postRows ?? []) as Record<string, any>[];
-  }
-
-  const repostedAtByPost = new Map<string, string>();
-  for (const row of repostRows) {
-    const postId = String(row.post_id ?? '');
-    if (postId && !repostedAtByPost.has(postId)) {
-      repostedAtByPost.set(postId, String(row.created_at ?? new Date().toISOString()));
+  const postIds = posts.map(post => post.id);
+  const { data, error } = await supabase.rpc('get_post_interactions', { p_post_ids: postIds });
+  if (error) {
+    const likes: Array<{ post_id: string; user_id: string }> = [];
+    for (let offset = 0; ; offset += 1000) {
+      const { data: page, error: likesError } = await supabase
+        .from('likes')
+        .select('post_id,user_id')
+        .in('post_id', postIds)
+        .order('post_id')
+        .order('user_id')
+        .range(offset, offset + 999);
+      if (likesError) return posts;
+      likes.push(...(page || []));
+      if (!page || page.length < 1000) break;
     }
-  }
 
-  const merged = [...authored];
-  for (const row of repostedRows) {
-    const postId = String(row.id);
-    merged.push({
-      ...row,
-      reposted_at: repostedAtByPost.get(postId) ?? null,
-      reposter_id: profileUserId,
+    const { data: feedbackRows } = await supabase
+      .from('post_feedback')
+      .select('post_id,feedback')
+      .eq('user_id', currentUserId)
+      .in('post_id', postIds);
+    const likesByPost = new Map<string, { count: number; likedByMe: boolean }>();
+    for (const like of likes) {
+      const summary = likesByPost.get(like.post_id) || { count: 0, likedByMe: false };
+      summary.count += 1;
+      summary.likedByMe ||= like.user_id === currentUserId;
+      likesByPost.set(like.post_id, summary);
+    }
+    const feedbackByPost = new Map((feedbackRows || []).map(row => [row.post_id, row.feedback]));
+    return posts.map(post => {
+      const summary = likesByPost.get(post.id);
+      return {
+        ...post,
+        likes_count: summary?.count || 0,
+        liked_by_me: summary?.likedByMe || false,
+        feedback_by_me: (feedbackByPost.get(post.id) as Post['feedback_by_me']) || null,
+      };
     });
   }
+  const interactionRows = (data || []) as Array<{
+    post_id: string;
+    likes_count: number;
+    comments_count: number;
+    reposts_count: number;
+    liked_by_me: boolean;
+    reposted_by_me: boolean;
+    saved_by_me: boolean;
+    feedback_by_me: string | null;
+  }>;
+  const interactionByPost = new Map(interactionRows.map(row => [row.post_id, row]));
 
-  merged.sort((a, b) => {
-    const aDate = String(a.reposted_at ?? a.created_at ?? '');
-    const bDate = String(b.reposted_at ?? b.created_at ?? '');
-    return new Date(bDate).getTime() - new Date(aDate).getTime();
+  return posts.map(post => {
+    const interaction = interactionByPost.get(post.id);
+    return {
+      ...post,
+      likes_count: Number(interaction?.likes_count || 0),
+      comments_count: Number(interaction?.comments_count || 0),
+      reposts_count: Number(interaction?.reposts_count || 0),
+      liked_by_me: Boolean(interaction?.liked_by_me),
+      reposted_by_me: Boolean(interaction?.reposted_by_me),
+      saved_by_me: Boolean(interaction?.saved_by_me),
+      feedback_by_me: (interaction?.feedback_by_me as Post['feedback_by_me']) || null,
+    };
   });
-
-  return merged;
 }
 
-function usePosts(
-  query: 'feed' | 'reel' | 'profile' | 'single',
-  targetUserId?: string,
-  currentUserId?: string,
-) {
+function usePosts(query: 'feed' | 'reel' | 'profile', targetUserId?: string, currentUserId = '') {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    if (!supabaseConfigured) {
-      setPosts([]);
-      setLoading(false);
-      return;
-    }
-
+    if (!supabaseConfigured) { setPosts([]); setLoading(false); return; }
     setLoading(true);
     try {
-      let request = supabase.from('posts').select('*');
-
       if (query === 'feed') {
-        request = request
+        const { data: rawPosts, error: postsErr } = await supabase
+          .from('posts')
+          .select('id, user_id, content, media_url, media_urls, type, created_at')
           .in('type', ['text', 'photo'])
           .order('created_at', { ascending: false })
           .limit(50);
+
+        if (postsErr) throw postsErr;
+
+        if (rawPosts && rawPosts.length > 0) {
+          const uIds = [...new Set(rawPosts.map(p => p.user_id))];
+          const { data: profs } = await supabase.from('profiles').select('id, username, full_name, avatar_url').in('id', uIds);
+          const profMap = new Map((profs || []).map(p => [p.id, p]));
+
+          const formatted = rawPosts.map(p => ({
+            ...p,
+            author: profMap.get(p.user_id) || { id: p.user_id, username: 'user', full_name: 'مستخدم آني' },
+            likes: [],
+            comments: []
+          }));
+          setPosts(await hydratePostInteractions(formatted as unknown as Post[], currentUserId));
+        } else {
+          setPosts([]);
+        }
+      } else if (query === 'profile' && targetUserId) {
+        const { data: rawPosts, error: postsErr } = await supabase
+          .from('posts')
+          .select('id, user_id, content, media_url, media_urls, type, created_at')
+          .eq('user_id', targetUserId)
+          .order('created_at', { ascending: false });
+
+        if (postsErr) throw postsErr;
+
+        if (rawPosts && rawPosts.length > 0) {
+          const { data: profData } = await supabase
+            .from('profiles')
+            .select('id, username, full_name, avatar_url')
+            .eq('id', targetUserId)
+            .maybeSingle();
+
+          const formattedPosts = rawPosts.map(p => ({
+            ...p,
+            author: profData || { id: targetUserId, username: 'user', full_name: 'مستخدم' },
+            likes: [],
+            comments: []
+          }));
+
+          setPosts(await hydratePostInteractions(formattedPosts as unknown as Post[], currentUserId));
+        } else {
+          setPosts([]);
+        }
       } else if (query === 'reel') {
-        request = request
+        const { data: rawPosts, error: postsErr } = await supabase
+          .from('posts')
+          .select('id, user_id, content, media_url, media_urls, type, created_at')
           .eq('type', 'reel')
           .order('created_at', { ascending: false })
           .limit(50);
-      } else if (query === 'profile' && targetUserId) {
-        request = request
-          .eq('user_id', targetUserId)
-          .order('created_at', { ascending: false });
-      } else if (query === 'single' && targetUserId) {
-        request = request.eq('id', targetUserId).limit(1);
-      }
 
-      const { data, error } = await request;
-      if (error) throw error;
+        if (postsErr) throw postsErr;
 
-      let rows = (data ?? []) as Record<string, any>[];
+        if (rawPosts && rawPosts.length > 0) {
+          const uIds = [...new Set(rawPosts.map(p => p.user_id))];
+          const { data: profs } = await supabase.from('profiles').select('id, username, full_name, avatar_url').in('id', uIds);
+          const profMap = new Map((profs || []).map(p => [p.id, p]));
 
-      if (query === 'profile' && targetUserId) {
-        rows = await mergeProfileReposts(rows, targetUserId);
-      }
-
-      // "غير مهتم" — posts the viewer muted disappear from their own feed
-      // (never from their own profile page).
-      if (query === 'feed' && currentUserId) {
-        const hidden = hiddenPostIds(currentUserId);
-        if (hidden.size) {
-          rows = rows.filter((row) => !hidden.has(String(row.id)));
+          const formatted = rawPosts.map(p => ({
+            ...p,
+            author: profMap.get(p.user_id) || { id: p.user_id, username: 'user', full_name: 'مستخدم آني' },
+            likes: [],
+            comments: []
+          }));
+          setPosts(await hydratePostInteractions(formatted as unknown as Post[], currentUserId));
+        } else {
+          setPosts([]);
         }
       }
-
-      if (currentUserId) {
-        void hydrateFeedback(
-          rows.map((row) => String(row.id)),
-          currentUserId,
-        );
-      }
-
-      const decorated = await decoratePosts(rows, currentUserId ?? '');
-      setPosts(decorated);
     } catch {
       setPosts([]);
     } finally {
@@ -2019,103 +1415,10 @@ function usePosts(
     void refresh();
     const onPostCreated = () => void refresh();
     window.addEventListener('aani:post-created', onPostCreated);
-    window.addEventListener('aani:repost-changed', onPostCreated);
-    return () => {
-      window.removeEventListener('aani:post-created', onPostCreated);
-      window.removeEventListener('aani:repost-changed', onPostCreated);
-    };
+    return () => window.removeEventListener('aani:post-created', onPostCreated);
   }, [refresh]);
 
   return { posts, loading, refresh };
-}
-
-// --- صفحة المحفوظات ---
-function SavedPage({ userId, profile }: { userId: string; profile: Profile | null }) {
-  const { posts, loading, error, refresh } = useSavedPosts(userId);
-
-  return (
-    <section className="page feed-page px-4 pb-24 pt-4">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
-          <Bookmark size={16} className="text-amber-400" />
-          المحفوظات
-        </h2>
-        <button type="button" className="text-[11px] text-zinc-400 hover:text-white" onClick={() => void refresh()}>
-          تحديث
-        </button>
-      </div>
-
-      {loading && (
-        <div className="flex items-center justify-center py-12 text-zinc-500">
-          <Loader2 className="animate-spin" size={20} />
-        </div>
-      )}
-
-      {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
-
-      {!loading && posts.length === 0 && !error && (
-        <div className="empty-state text-center py-16 text-zinc-500">
-          <Bookmark size={36} className="mx-auto mb-2" />
-          <p className="text-xs">لا توجد منشورات محفوظة بعد. اضغط أيقونة الحفظ على أي منشور.</p>
-        </div>
-      )}
-
-      <div className="posts-list space-y-3">
-        {posts.map((post) => (
-          <PostCard
-            key={post.id}
-            post={post}
-            currentUserId={userId}
-            profile={profile}
-            onRefresh={() => void refresh()}
-          />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-// --- صفحة منشور واحد (رابط المشاركة) ---
-function PostPage({
-  postId,
-  userId,
-  profile,
-}: {
-  postId: string;
-  userId: string;
-  profile: Profile | null;
-}) {
-  const { posts, loading, refresh } = usePosts('single', postId, userId);
-
-  return (
-    <section className="page px-4 pb-24 pt-4">
-      <Link href="/feed" className="inline-flex items-center gap-1 text-[11px] text-zinc-400 hover:text-white mb-3">
-        <ArrowUpLeft size={14} /> العودة إلى الرئيسية
-      </Link>
-
-      {loading && (
-        <div className="flex items-center justify-center py-12 text-zinc-500">
-          <Loader2 className="animate-spin" size={20} />
-        </div>
-      )}
-
-      {!loading && posts.length === 0 && (
-        <p className="text-xs text-zinc-500 text-center py-12">لم يتم العثور على هذا المنشور أو أنه غير متاح.</p>
-      )}
-
-      <div className="posts-list space-y-3">
-        {posts.map((post) => (
-          <PostCard
-            key={post.id}
-            post={post}
-            currentUserId={userId}
-            profile={profile}
-            onRefresh={() => void refresh()}
-          />
-        ))}
-      </div>
-    </section>
-  );
 }
 
 // --- الصفحة الرئيسية ---
@@ -2138,7 +1441,54 @@ function FeedPage({ userId, profile }: { userId: string; profile: Profile | null
         </div>
       )}
 
-      {!loading && posts.length > 0 && <div className="posts-list space-y-3">{posts.map(post => <PostCard key={post.id} post={post} currentUserId={userId} profile={profile} onRefresh={() => void refresh()} />)}</div>}
+      {!loading && posts.length > 0 && <div className="posts-list space-y-3">{posts.map(post => <PostCard key={post.id} post={post} currentUserId={userId} onRefresh={() => void refresh()} />)}</div>}
+    </section>
+  );
+}
+
+function PostDetailPage({ postId, currentUserId }: { postId: string; currentUserId: string }) {
+  const [post, setPost] = useState<Post | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    if (!supabaseConfigured) {
+      setPost(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.from('posts')
+        .select('id, user_id, content, media_url, media_urls, type, created_at')
+        .eq('id', postId)
+        .maybeSingle();
+      if (error || !data) {
+        setPost(null);
+        return;
+      }
+      const { data: author } = await supabase.from('profiles')
+        .select('id, username, full_name, avatar_url')
+        .eq('id', data.user_id)
+        .maybeSingle();
+      const hydrated = await hydratePostInteractions([{
+        ...data,
+        author: author || { id: data.user_id, username: 'user', full_name: 'مستخدم آني' },
+      } as unknown as Post], currentUserId);
+      setPost(hydrated[0] || null);
+    } catch {
+      setPost(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [postId, currentUserId]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  return (
+    <section className="new-view mx-auto w-full max-w-lg">
+      {loading && <p className="py-8 text-center text-sm text-zinc-400">جارٍ تحميل المنشور...</p>}
+      {!loading && !post && <p className="py-8 text-center text-sm text-zinc-400">هذا المنشور غير متاح.</p>}
+      {post && <PostCard post={post} currentUserId={currentUserId} onRefresh={() => void refresh()} />}
     </section>
   );
 }
@@ -2437,7 +1787,7 @@ function ProfilePage({ targetUserId, currentUserId, profile, onProfileUpdate }: 
       {!loading && posts.length > 0 && (
         <div className="posts-list space-y-3">
           {posts.map(post => (
-            <PostCard key={post.id} post={post} currentUserId={currentUserId} profile={profile} onRefresh={() => void refresh()} />
+            <PostCard key={post.id} post={post} currentUserId={currentUserId} onRefresh={() => void refresh()} />
           ))}
         </div>
       )}
@@ -2445,232 +1795,266 @@ function ProfilePage({ targetUserId, currentUserId, profile, onProfileUpdate }: 
   );
 }
 
-// --- شريط تفاعلات الريل (إعجاب، تعليق، إعادة نشر، مشاركة، حفظ) ---
-function ReelActions({
-  post,
-  userId,
-  onEdit,
-}: {
-  post: Post;
-  userId: string;
-  onEdit?: (post: Post) => void;
-}) {
-  const interactions = usePostInteractions(post, userId);
-  const [showComments, setShowComments] = useState(false);
-  const [showShare, setShowShare] = useState(false);
+// --- شريحة ريل مع أزرار عائمة مرتفعة ومتحركة مع كل فيديو ---
+function ReelSlide({ post, currentUserId }: { post: Post; currentUserId: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [liked, setLiked] = useState(post.liked_by_me ?? (post.likes || []).some(l => l.user_id === currentUserId));
+  const [likesCount, setLikesCount] = useState(post.likes_count ?? post.likes?.length ?? 0);
+  const [saved, setSaved] = useState(post.saved_by_me ?? false);
+  const [reposted, setReposted] = useState(post.reposted_by_me ?? false);
+  const [feedback, setFeedback] = useState<Post['feedback_by_me']>(post.feedback_by_me || null);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    setLiked(post.liked_by_me ?? (post.likes || []).some(like => like.user_id === currentUserId));
+    setLikesCount(post.likes_count ?? post.likes?.length ?? 0);
+    setSaved(post.saved_by_me ?? false);
+    setReposted(post.reposted_by_me ?? false);
+    setFeedback(post.feedback_by_me || null);
+  }, [post, currentUserId]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    const container = containerRef.current;
+    if (!video || !container) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            video.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+          } else {
+            video.pause();
+            setPlaying(false);
+          }
+        });
+      },
+      { threshold: 0.6 }
+    );
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  const togglePlay = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) {
+      v.play();
+      setPlaying(true);
+    } else {
+      v.pause();
+      setPlaying(false);
+    }
+  };
+
+  const toggleLike = async () => {
+    const prevLiked = liked;
+    const prevCount = likesCount;
+    setLiked(!prevLiked);
+    setLikesCount(prevLiked ? prevCount - 1 : prevCount + 1);
+
+    if (!supabaseConfigured) return;
+    try {
+      if (prevLiked) {
+        const { error } = await supabase.from('likes').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('likes').insert({ post_id: post.id, user_id: currentUserId });
+        if (error) throw error;
+      }
+    } catch {
+      setLiked(prevLiked);
+      setLikesCount(prevCount);
+    }
+  };
+
+  const toggleBookmark = async () => {
+    const prevSaved = saved;
+    setSaved(!prevSaved);
+
+    if (!supabaseConfigured) return;
+    try {
+      if (prevSaved) {
+        await supabase.from('bookmarks').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+      } else {
+        await supabase.from('bookmarks').insert({ post_id: post.id, user_id: currentUserId });
+      }
+    } catch {
+      setSaved(prevSaved);
+    }
+  };
+
+  const toggleRepost = async () => {
+    const prevReposted = reposted;
+    setReposted(!prevReposted);
+
+    if (!supabaseConfigured) return;
+    try {
+      if (prevReposted) {
+        await supabase.from('reposts').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+      } else {
+        await supabase.from('reposts').insert({ post_id: post.id, user_id: currentUserId });
+      }
+    } catch {
+      setReposted(prevReposted);
+    }
+  };
+
+  const handleShare = async () => {
+    const shareUrl = `${window.location.origin}/post/${post.id}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'ريل على آني', url: shareUrl }); } catch {}
+    } else {
+      await navigator.clipboard.writeText(shareUrl);
+      alert('تم نسخ رابط الريل للمشاركة!');
+    }
+  };
+
+  const saveFeedback = async (value: 'interested' | 'not_interested') => {
+    if (!supabaseConfigured) return;
+    const previousFeedback = feedback;
+    const nextFeedback = previousFeedback === value ? null : value;
+    setFeedback(nextFeedback);
+    try {
+      const result = nextFeedback
+        ? await supabase.from('post_feedback').upsert({ post_id: post.id, user_id: currentUserId, feedback: nextFeedback }, { onConflict: 'post_id,user_id' })
+        : await supabase.from('post_feedback').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+      if (result.error) throw result.error;
+    } catch {
+      setFeedback(previousFeedback);
+      alert('تعذر حفظ اختيارك. تأكد من تطبيق ترحيل تفاعلات المنشورات في Supabase.');
+    }
+  };
+
+  const reportPost = async () => {
+    const reason = window.prompt('ما سبب الإبلاغ عن هذا الريل؟');
+    if (!reason?.trim() || !supabaseConfigured) return;
+    const { error } = await supabase.from('post_reports').insert({
+      post_id: post.id,
+      reporter_id: currentUserId,
+      reason: reason.trim(),
+    });
+    if (error) {
+      alert(error.code === '23505' ? 'سبق أن أبلغت عن هذا الريل.' : 'تعذر إرسال البلاغ. تأكد من تطبيق ترحيل التفاعلات في Supabase.');
+      return;
+    }
+    alert('تم إرسال البلاغ للمراجعة.');
+  };
 
   return (
-    <>
-      {showComments && (
-        <div className="absolute inset-x-0 bottom-0 z-40 max-h-[62%] overflow-y-auto bg-zinc-950/95 border-t border-zinc-800 p-3 text-white rounded-t-2xl">
-          <div className="flex items-center justify-between mb-1">
-            <strong className="text-xs">التعليقات ({formatCount(interactions.comments)})</strong>
-            <button type="button" onClick={() => setShowComments(false)} aria-label="إغلاق التعليقات">
-              <X size={16} />
-            </button>
+    <section ref={containerRef} className="reel-slide relative w-full h-screen overflow-hidden bg-black">
+      <video
+        ref={videoRef}
+        src={post.media_url || ''}
+        loop
+        playsInline
+        onClick={togglePlay}
+        className="w-full h-full object-cover cursor-pointer"
+      />
+
+      {!playing && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+          <div className="bg-black/50 rounded-full p-5 backdrop-blur-md text-white">
+            <Play size={36} fill="currentColor" />
           </div>
-          <CommentsPanel post={post} currentUserId={userId} />
         </div>
       )}
 
-      <div className="absolute right-3 bottom-12 z-30 flex flex-col items-center gap-4 text-white bg-black/40 p-2 rounded-full backdrop-blur-md border border-white/10">
-        <button
-          type="button"
-          aria-pressed={interactions.liked}
-          aria-label={interactions.liked ? 'إلغاء الإعجاب' : 'إعجاب'}
-          className={`flex flex-col items-center gap-0.5 transition active:scale-90 ${interactions.liked ? 'text-pink-500' : 'hover:text-pink-500'}`}
-          onClick={() => void interactions.toggleLike()}
-        >
-          <Heart size={20} fill={interactions.liked ? 'currentColor' : 'none'} />
-          <span className="text-[10px] font-bold">{formatCount(interactions.likes)}</span>
-        </button>
-
-        <button
-          type="button"
-          aria-expanded={showComments}
-          aria-label="التعليقات"
-          className={`flex flex-col items-center gap-0.5 transition ${showComments ? 'text-blue-400' : 'hover:text-blue-400'}`}
-          onClick={() => setShowComments((open) => !open)}
-        >
-          <MessageSquare size={19} />
-          <span className="text-[10px] font-bold">{formatCount(interactions.comments)}</span>
-        </button>
-
-        <button
-          type="button"
-          aria-pressed={interactions.reposted}
-          aria-label="إعادة نشر"
-          className={`flex flex-col items-center gap-0.5 transition active:scale-90 ${interactions.reposted ? 'text-emerald-400' : 'hover:text-emerald-400'}`}
-          onClick={() => void interactions.toggleRepost()}
-        >
-          <Repeat size={19} />
-          <span className="text-[10px] font-bold">{formatCount(interactions.reposts)}</span>
-        </button>
-
-        <button
-          type="button"
-          aria-label="مشاركة"
-          className={`flex flex-col items-center gap-0.5 transition active:scale-90 ${interactions.shared ? 'text-purple-400' : 'hover:text-purple-400'}`}
-          onClick={() => setShowShare(true)}
-        >
-          <Share2 size={19} />
-          <span className="text-[10px] font-bold">{formatCount(interactions.shares)}</span>
-        </button>
-
-        <button
-          type="button"
-          aria-pressed={interactions.bookmarked}
-          aria-label={interactions.bookmarked ? 'إزالة من المحفوظات' : 'حفظ الريل'}
-          className={`transition active:scale-90 ${interactions.bookmarked ? 'text-amber-400' : 'hover:text-amber-400'}`}
-          onClick={() => void interactions.toggleBookmark()}
-        >
-          <Bookmark size={19} fill={interactions.bookmarked ? 'currentColor' : 'none'} />
-        </button>
-
-        {post.user_id === userId && onEdit && (
-          <button
-            type="button"
-            aria-label="تعديل الريل"
-            className="hover:text-amber-400 transition"
-            onClick={() => onEdit(post)}
-          >
-            <MoreVertical size={20} />
-          </button>
-        )}
+      {/* تفاصيل الريل أسفل الشاشة */}
+      <div className="absolute inset-x-0 bottom-0 pt-24 pb-12 px-4 reel-gradient-bottom z-20 pointer-events-none">
+        <div className="flex items-end justify-between gap-4">
+          <div className="flex-1 min-w-0 text-white pointer-events-auto">
+            <div className="flex items-center gap-2 mb-2">
+              <Avatar profile={post.author} />
+              <span className="font-bold text-sm truncate">{displayName(post.author)}</span>
+            </div>
+            {post.content && <p className="text-sm leading-snug line-clamp-3">{post.content}</p>}
+          </div>
+        </div>
       </div>
 
-      <ShareSheet
-        post={post}
-        currentUserId={userId}
-        open={showShare}
-        onClose={() => setShowShare(false)}
-      />
-    </>
+      {/* الأزرار العائمة المرتفعة عن شريط التنقل والمتحركة مع كل فيديو */}
+      <div className="absolute right-4 bottom-28 z-30 flex flex-col items-center gap-4">
+        {/* 1. الإعجاب */}
+        <button onClick={toggleLike} className="flex flex-col items-center gap-1 text-white">
+          <span className={`p-2.5 rounded-full bg-black/40 border border-white/20 backdrop-blur-md transition ${liked ? 'text-pink-500' : ''}`}>
+            <Heart size={22} fill={liked ? 'currentColor' : 'none'} />
+          </span>
+          <span className="text-[11px] font-semibold">{likesCount}</span>
+        </button>
+
+        {/* 2. التعليقات */}
+        <button className="flex flex-col items-center gap-1 text-white">
+          <span className="p-2.5 rounded-full bg-black/40 border border-white/20 backdrop-blur-md">
+            <MessageSquare size={22} />
+          </span>
+          <span className="text-[11px] font-semibold">{post.comments?.length || 0}</span>
+        </button>
+
+        {/* 3. إعادة النشر */}
+        <button onClick={toggleRepost} className="flex flex-col items-center gap-1 text-white">
+          <span className={`p-2.5 rounded-full bg-black/40 border border-white/20 backdrop-blur-md transition ${reposted ? 'text-emerald-400' : ''}`}>
+            <Repeat size={22} />
+          </span>
+        </button>
+
+        {/* 4. المشاركة */}
+        <button onClick={handleShare} className="flex flex-col items-center gap-1 text-white">
+          <span className="p-2.5 rounded-full bg-black/40 border border-white/20 backdrop-blur-md">
+            <Send size={22} />
+          </span>
+        </button>
+
+        {/* 5. الحفظ */}
+        <button onClick={toggleBookmark} className="flex flex-col items-center gap-1 text-white">
+          <span className={`p-2.5 rounded-full bg-black/40 border border-white/20 backdrop-blur-md transition ${saved ? 'text-amber-400' : ''}`}>
+            <Bookmark size={22} fill={saved ? 'currentColor' : 'none'} />
+          </span>
+        </button>
+
+        {/* 6. النقاط الثلاثة خيارات إضافية */}
+        <div className="relative">
+          <button onClick={() => setMenuOpen(!menuOpen)} className="p-2 rounded-full bg-black/40 border border-white/20 backdrop-blur-md text-white">
+            <MoreVertical size={18} />
+          </button>
+
+          {menuOpen && (
+            <div className="absolute right-10 bottom-0 bg-zinc-900 border border-zinc-800 rounded-xl p-2 w-48 text-xs text-white shadow-2xl z-40">
+              <button onClick={() => { void reportPost(); setMenuOpen(false); }} className="flex items-center gap-2 w-full text-red-400 p-2 hover:bg-zinc-800 rounded-lg">
+                <Flag size={14} /> إبلاغ عن الريل
+              </button>
+              <button onClick={() => { void saveFeedback('interested'); setMenuOpen(false); }} className={`flex items-center gap-2 w-full p-2 hover:bg-zinc-800 rounded-lg ${feedback === 'interested' ? 'text-cyan-300' : 'text-zinc-300'}`}>
+                <ThumbsUp size={14} /> {feedback === 'interested' ? 'إلغاء مهتم' : 'مهتم'}
+              </button>
+              <button onClick={() => { void saveFeedback('not_interested'); setMenuOpen(false); }} className={`flex items-center gap-2 w-full p-2 hover:bg-zinc-800 rounded-lg ${feedback === 'not_interested' ? 'text-zinc-100' : 'text-zinc-300'}`}>
+                <EyeOff size={14} /> {feedback === 'not_interested' ? 'إلغاء غير مهتم' : 'غير مهتم'}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 
 // --- صفحة Reels ---
 function ReelsPage({ userId }: { userId: string }) {
-  const { posts, loading, refresh } = usePosts('reel', undefined, userId);
-  const [editingPost, setEditingPost] = useState<Post | null>(null);
-  const [editContent, setEditContent] = useState('');
-  const [editFile, setEditFile] = useState<File | null>(null);
-  const [updating, setUpdating] = useState(false);
-
-  const handleUpdateReel = async () => {
-    if (!supabaseConfigured || !editingPost) return;
-    setUpdating(true);
-    try {
-      let mediaUrl = editingPost.media_url;
-
-      if (editFile) {
-        const safeName = editFile.name.replace(/[^a-zA-Z0-9._-]/g, '-');
-        const uploadedPath = `${userId}/reel-${Date.now()}-${safeName}`;
-        const { error: uploadErr } = await supabase.storage.from(storageBucket).upload(uploadedPath, editFile, { upsert: true, contentType: editFile.type });
-        if (uploadErr) throw uploadErr;
-        mediaUrl = supabase.storage.from(storageBucket).getPublicUrl(uploadedPath).data.publicUrl;
-      }
-
-      await supabase.from('posts').update({
-        content: editContent,
-        media_url: mediaUrl
-      }).eq('id', editingPost.id);
-
-      setEditingPost(null);
-      setEditFile(null);
-      refresh();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'فشل تعديل الريل.');
-    } finally {
-      setUpdating(false);
-    }
-  };
-
-  const handleDeleteReel = async (postId: string) => {
-    if (!supabaseConfigured) return;
-    if (confirm('هل أنت تأكد من رغبتك في حذف مقطع الريل هذا نهائياً؟')) {
-      await supabase.from('posts').delete().eq('id', postId);
-      refresh();
-    }
-  };
+  const { posts, loading } = usePosts('reel', undefined, userId);
 
   return (
-    <section className="new-view p-0 max-w-lg mx-auto">
-      {loading && <div className="status-box">جاري تحميل الريلز...</div>}
+    <div className="reels-container">
+      {loading && <div className="status-box text-white pt-20">جاري تحميل الريلز...</div>}
       {!loading && !posts.length && (
-        <div className="empty-state card text-center py-12">
-          <Film size={32} className="mx-auto text-pink-500 mb-2" />
-          <h2 className="text-white font-bold">لا يوجد ريلز منشور حالياً</h2>
-          <p className="text-xs text-zinc-400 mt-1">انقر على علامة (+) بالأعلى لنشر أول فيديو لك!</p>
+        <div className="empty-state text-center py-24 text-white">
+          <Film size={36} className="mx-auto text-pink-500 mb-2" />
+          <h2 className="font-bold text-lg">لا يوجد ريلز منشور حالياً</h2>
         </div>
       )}
-
-      <div className="reels-feed space-y-4">
-        {posts.map(post => (
-          <article className="relative w-full h-[82vh] bg-black rounded-3xl overflow-hidden flex items-center justify-center border border-zinc-800 shadow-2xl" key={post.id}>
-            <video 
-              src={post.media_url || ''} 
-              autoPlay 
-              loop 
-              muted 
-              playsInline 
-              controls
-              preload="metadata"
-              className="w-full h-full object-cover" 
-            />
-
-            <div className="absolute bottom-4 right-4 left-16 z-20 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 rounded-2xl backdrop-blur-xs text-white">
-              <strong className="text-xs block font-bold">{displayName(post.author)}</strong>
-              {post.content && <p className="text-xs text-zinc-200 mt-1">{post.content}</p>}
-            </div>
-
-            <ReelActions
-              post={post}
-              userId={userId}
-              onEdit={(target) => {
-                setEditingPost(target);
-                setEditContent(target.content || '');
-              }}
-            />
-          </article>
-        ))}
-      </div>
-
-      {editingPost && (
-        <div className="modal-overlay" onClick={() => setEditingPost(null)}>
-          <div className="modal-content max-w-sm w-full bg-zinc-900 border border-zinc-800 p-4 rounded-2xl space-y-3" onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
-              <h3 className="font-bold text-white text-sm flex items-center gap-1">
-                <Edit3 size={16} className="text-pink-500" /> تعديل/استبدال مقطع الريل
-              </h3>
-              <button onClick={() => setEditingPost(null)}><X size={18} className="text-zinc-400" /></button>
-            </div>
-
-            <textarea 
-              value={editContent} 
-              onChange={e => setEditContent(e.target.value)} 
-              className="w-full bg-zinc-950 border border-zinc-800 p-2.5 rounded-xl text-xs text-white outline-none resize-none"
-              rows={3}
-            />
-
-            <label className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 p-2.5 rounded-xl cursor-pointer hover:bg-zinc-800 text-xs text-zinc-300">
-              <Video size={16} className="text-purple-400" />
-              <span>{editFile ? editFile.name : 'استبدال ملف الفيديو الحالي بمقطع جديد'}</span>
-              <input type="file" accept="video/*" className="hidden" onChange={e => e.target.files?.[0] && setEditFile(e.target.files[0])} />
-            </label>
-
-            <div className="flex justify-between items-center pt-2 border-t border-zinc-800">
-              <button onClick={() => handleDeleteReel(editingPost.id)} className="text-xs text-red-400 flex items-center gap-1 hover:underline">
-                <Trash2 size={14} /> حذف المقطع
-              </button>
-              <button disabled={updating} onClick={handleUpdateReel} className="button-primary text-xs px-4">
-                {updating ? 'جاري الحفظ...' : 'حفظ التغييرات'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </section>
+      {!loading && posts.map(post => <ReelSlide key={post.id} post={post} currentUserId={userId} />)}
+    </div>
   );
 }
 
@@ -2901,14 +2285,22 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
   const [showAssistantModal, setShowAssistantModal] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  useInteractionRealtime(userId);
-
   const [postText, setPostText] = useState('');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileType, setFileType] = useState<'image' | 'video' | null>(null);
-  const [overlayText, setOverlayText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createError, setCreateError] = useState('');
+
+  // معاينات الملفات: إنشاء الروابط مرة واحدة لكل ملف مع تنظيفها بعد الاستخدام
+  const filePreviews = useMemo(
+    () => selectedFiles.map((file) => ({ file, url: URL.createObjectURL(file) })),
+    [selectedFiles]
+  );
+
+  useEffect(() => {
+    if (filePreviews.length === 0) return;
+    return () => filePreviews.forEach((preview) => URL.revokeObjectURL(preview.url));
+  }, [filePreviews]);
 
   useEffect(() => {
     if (!supabaseConfigured || !userId) return;
@@ -2917,10 +2309,6 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
     });
   }, [userId, showNotifsModal]);
 
-  const previewUrl = useMemo(() => selectedFile ? URL.createObjectURL(selectedFile) : null, [selectedFile]);
-
-  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
-
   const handlePublish = async () => {
     if (!supabaseConfigured) {
       setCreateError('إعدادات الاتصال بقاعدة البيانات غير مكتملة في Secrets.');
@@ -2928,41 +2316,44 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
     }
 
     const content = postText.trim();
-    if (!content && !selectedFile) return;
+    if (!content && selectedFiles.length === 0) return;
 
     setIsSubmitting(true);
     setCreateError('');
     try {
-      let mediaUrl: string | null = null;
+      const uploadedUrls: string[] = [];
       let type: 'text' | 'photo' | 'reel' = 'text';
 
-      if (selectedFile && fileType) {
-        const safeName = selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, '-');
-        const uploadedPath = `${userId}/${Date.now()}-${safeName}`;
+      if (selectedFiles.length > 0 && fileType) {
+        for (const file of selectedFiles) {
+          const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+          const uploadedPath = `${userId}/${Date.now()}-${safeName}`;
 
-        const { error: uploadError } = await supabase.storage
-          .from(storageBucket)
-          .upload(uploadedPath, selectedFile, { upsert: true, contentType: selectedFile.type });
+          const { error: uploadError } = await supabase.storage
+            .from(storageBucket)
+            .upload(uploadedPath, file, { upsert: true, contentType: file.type });
 
-        if (uploadError) throw new Error(`فشل رفع الملف: ${uploadError.message}`);
+          if (uploadError) throw new Error(`فشل رفع الملف: ${uploadError.message}`);
 
-        const publicData = supabase.storage.from(storageBucket).getPublicUrl(uploadedPath);
-        mediaUrl = publicData.data.publicUrl;
+          const publicData = supabase.storage.from(storageBucket).getPublicUrl(uploadedPath);
+          const publicUrl = publicData?.data?.publicUrl;
+          if (publicUrl) uploadedUrls.push(publicUrl);
+        }
         type = fileType === 'image' ? 'photo' : 'reel';
       }
 
       const { error: postError } = await supabase.from('posts').insert({
         user_id: userId,
-        content: overlayText ? `${content}\n[نص الصورة: ${overlayText}]` : content,
-        media_url: mediaUrl,
+        content: content || null,
+        media_url: uploadedUrls[0] || null,
+        media_urls: uploadedUrls.length > 0 ? uploadedUrls : null,
         type,
       });
 
       if (postError) throw new Error(`فشل حفظ المنشور: ${postError.message}`);
 
       setPostText('');
-      setOverlayText('');
-      setSelectedFile(null);
+      setSelectedFiles([]);
       setFileType(null);
       setShowCreateModal(false);
       window.dispatchEvent(new Event('aani:post-created'));
@@ -3009,13 +2400,6 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
         </div>
 
         <div className="flex items-center justify-end gap-2">
-          <Link
-            href="/saved"
-            title="المحفوظات"
-            className={`icon-button ${path.startsWith('/saved') ? 'text-amber-400' : 'text-zinc-300'}`}
-          >
-            <Bookmark size={20} fill={path.startsWith('/saved') ? 'currentColor' : 'none'} />
-          </Link>
           {path.startsWith('/profile') && (
             <button className="icon-button text-zinc-300" onClick={() => setShowSettingsModal(true)}>
               <Settings size={20} />
@@ -3043,26 +2427,30 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
               rows={3} 
             />
 
-            {selectedFile && (
-              <div className="relative w-full rounded-xl overflow-hidden border border-zinc-800 bg-black aspect-square flex items-center justify-center">
-                {fileType === 'image' ? (
-                  <img src={previewUrl || ''} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  <video src={previewUrl || ''} controls className="w-full h-full object-cover" />
-                )}
-                <button type="button" onClick={() => { setSelectedFile(null); setFileType(null); }} className="absolute top-2 right-2 bg-black/70 text-white rounded-full p-1">
-                  <X size={14} />
-                </button>
+            {filePreviews.length > 0 && (
+              <div className="flex gap-2 overflow-x-auto py-2 no-scrollbar">
+                {filePreviews.map((preview, i) => (
+                  <div key={preview.url} className="relative w-20 h-20 rounded-xl overflow-hidden border border-zinc-800 shrink-0 bg-black">
+                    {fileType === 'image' ? (
+                      <img src={preview.url} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <video src={preview.url} className="w-full h-full object-cover" />
+                    )}
+                    <button type="button" onClick={() => setSelectedFiles(files => files.filter((_, idx) => idx !== i))} className="absolute top-1 right-1 bg-black/70 text-white rounded-full p-0.5">
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
 
-            <input type="file" id="image-upload" accept="image/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) { setSelectedFile(e.target.files[0]); setFileType('image'); } }} />
-            <input type="file" id="video-upload" accept="video/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) { setSelectedFile(e.target.files[0]); setFileType('video'); } }} />
+            <input type="file" id="image-upload" multiple accept="image/*" className="hidden" onChange={(e) => { if (e.target.files) { setSelectedFiles(Array.from(e.target.files)); setFileType('image'); } }} />
+            <input type="file" id="video-upload" accept="video/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) { setSelectedFiles([e.target.files[0]]); setFileType('video'); } }} />
 
             <div className="flex items-center justify-between pt-2 border-t border-zinc-800 text-xs">
               <div className="flex gap-2">
                 <label htmlFor="image-upload" className="flex items-center gap-1 px-3 py-2 text-pink-400 bg-pink-950/40 rounded-xl cursor-pointer">
-                  <ImagePlus size={15} /> صورة
+                  <ImagePlus size={15} /> صور
                 </label>
                 <label htmlFor="video-upload" className="flex items-center gap-1 px-3 py-2 text-purple-400 bg-purple-950/40 rounded-xl cursor-pointer">
                   <Video size={15} /> فيديو
@@ -3072,7 +2460,7 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
               <button 
                 type="button"
                 onClick={() => void handlePublish()}
-                disabled={isSubmitting || (!postText.trim() && !selectedFile)}
+                disabled={isSubmitting || (!postText.trim() && selectedFiles.length === 0)}
                 className="px-5 py-2 bg-pink-600 disabled:opacity-50 text-white rounded-xl font-semibold"
               >
                 {isSubmitting ? 'جاري النشر...' : 'نشر'}
@@ -3086,7 +2474,7 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
       <SettingsModal isOpen={showSettingsModal} onClose={() => setShowSettingsModal(false)} currentProfile={profile} onSignOut={onSignOut} />
       <NotificationsModal isOpen={showNotifsModal} onClose={() => setShowNotifsModal(false)} currentUserId={userId} />
 
-      {/* زر المساعد الذكي العائم على الشاشة */}
+      {/* زر المساعد الذكي العائم */}
       <button
         onClick={() => setShowAssistantModal(true)}
         className="fixed bottom-20 left-6 z-50 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700 text-white p-3.5 rounded-full shadow-2xl flex items-center justify-center transition-transform hover:scale-110 active:scale-95 border border-white/20"
@@ -3095,11 +2483,7 @@ function Shell({ children, profile, userId, onSignOut }: { children: ReactNode; 
         <Bot className="w-6 h-6" />
       </button>
 
-      {/* نافذة المساعد الذكي المباشرة */}
-      <AIAssistantModal 
-        open={showAssistantModal} 
-        onClose={() => setShowAssistantModal(false)} 
-      />
+      <AIAssistantModal open={showAssistantModal} onClose={() => setShowAssistantModal(false)} />
 
       <div className="content-shell pb-16">
         <main className="main-content">{children}</main>
@@ -3124,10 +2508,39 @@ function App() {
   useEffect(() => {
     document.documentElement.lang = 'ar';
     document.documentElement.dir = 'rtl';
-    if (!supabaseConfigured) { setAuthLoading(false); return; }
-    void supabase.auth.getSession().then(({ data }) => { setSession(data.session); setAuthLoading(false); });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, next) => { setSession(next); setProfile(null); });
-    return () => subscription.unsubscribe();
+
+    if (!supabaseConfigured) {
+      setAuthLoading(false);
+      return;
+    }
+
+    let mounted = true;
+
+    const loadSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        if (mounted) setSession(data.session);
+      } catch (error) {
+        console.error('تعذر استعادة جلسة المستخدم:', error);
+        if (mounted) setSession(null);
+      } finally {
+        if (mounted) setAuthLoading(false);
+      }
+    };
+
+    void loadSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!mounted) return;
+      setSession(nextSession);
+      setProfile(null);
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -3150,6 +2563,7 @@ function App() {
           <Shell userId={user.id} profile={profile} onSignOut={() => void signOut()}>
             <Switch>
               <Route path="/feed"><FeedPage userId={user.id} profile={profile} /></Route>
+              <Route path="/post/:postId">{params => <PostDetailPage postId={params.postId} currentUserId={user.id} />}</Route>
               <Route path="/"><FeedPage userId={user.id} profile={profile} /></Route>
               <Route path="/reels"><ReelsPage userId={user.id} /></Route>
               <Route path="/search"><SearchPage userId={user.id} /></Route>
@@ -3157,8 +2571,6 @@ function App() {
               <Route path="/messages/:userId">{params => <MessagesPage currentUserId={user.id} selectedId={params.userId} />}</Route>
               <Route path="/profile">{() => <ProfilePage targetUserId={user.id} currentUserId={user.id} profile={profile} onProfileUpdate={setProfile} />}</Route>
               <Route path="/profile/:userId">{params => <ProfilePage key={params.userId} targetUserId={params.userId} currentUserId={user.id} profile={profile} onProfileUpdate={setProfile} />}</Route>
-              <Route path="/saved">{() => <SavedPage userId={user.id} profile={profile} />}</Route>
-              <Route path="/post/:postId">{params => <PostPage postId={params.postId} userId={user.id} profile={profile} />}</Route>
               <Route component={NotFound} />
             </Switch>
           </Shell>
@@ -3171,7 +2583,7 @@ function App() {
           </Switch>
         )}
       </WouterRouter>
-      <Toaster theme="dark" position="top-center" richColors closeButton />
+      <Toaster />
     </TooltipProvider>
   );
 }

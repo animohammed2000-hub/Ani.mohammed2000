@@ -34,14 +34,7 @@ export type Post = {
   liked_by_me?: boolean;
   saved_by_me?: boolean;
   reposted_by_me?: boolean;
-  shared_by_me?: boolean;
-
-  /**
-   * Set when this post is shown on a profile because the profile owner
-   * reposted it rather than authoring it.
-   */
-  reposted_at?: string | null;
-  repost_attribution?: Profile | null;
+  feedback_by_me?: 'interested' | 'not_interested' | null;
 
   likes?: { user_id: string }[];
   comments?: PostComment[];
