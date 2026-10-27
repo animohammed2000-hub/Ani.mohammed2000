@@ -48,7 +48,7 @@
   --muted-foreground: 220 7% 64% !important;
   --accent: 16 67% 61% !important;
   --accent-foreground: 220 17% 10% !important;
-  --app-font-sans: 'Tajawal', 'Cairo', 'DM Sans', 'Noto Sans Arabic', sans-serif;
+  --app-font-sans: 'Tajawal', 'Cairo', 'Noto Sans Arabic', 'DM Sans', Tahoma, Arial, sans-serif;
   --app-font-serif: 'Newsreader', Georgia, serif;
 }
 
@@ -282,7 +282,7 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   direction: ltr;
-  overflow: hidden;
+  overflow-x: hidden;
   background: #f4f3ed;
   color: var(--auth-ink);
 }
@@ -364,6 +364,7 @@ body {
 
 .auth-panel {
   display: flex;
+  box-sizing: border-box;
   min-width: 0;
   min-height: 100vh;
   min-height: 100svh;
