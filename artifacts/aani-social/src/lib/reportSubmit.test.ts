@@ -7,7 +7,7 @@ import {
   classifyReportFailure,
   reportFailureMessage,
   shouldRetryWithLegacyShape,
-} from "../reportSubmit.ts";
+} from "./reportSubmit.ts";
 
 const input = {
   postId: "post-1",
