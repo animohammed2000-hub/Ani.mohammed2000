@@ -30,12 +30,6 @@ export type PostControlState = {
   audio: PostAudio | null;
 };
 
-const EMPTY_STATE: PostControlState = {
-  feedback: null,
-  commentsDisabled: false,
-  audio: null,
-};
-
 /** Tells the owner-facing UI that a write was only kept locally. */
 export const MIGRATION_HINT =
   "تم الحفظ على هذا الجهاز فقط. طبّق ملف الترحيل supabase/migrations/20261028000000_post_controls.sql لتفعيل الحفظ في قاعدة البيانات.";
@@ -505,5 +499,3 @@ export function usePostControls(post: Post, userId: string): UsePostControls {
     changeAudio,
   };
 }
-
-const EMPTY_STATE_KEY = EMPTY_STATE.feedback ?? "-";
