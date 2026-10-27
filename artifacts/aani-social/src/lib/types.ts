@@ -23,6 +23,14 @@ export type Post = {
   reposts_count?: number;
   shares_count?: number;
 
+  /** Owner can close the comment thread for a single post. */
+  comments_disabled?: boolean;
+  /** Optional audio / music attached to the post. */
+  audio_url?: string | null;
+  audio_title?: string | null;
+  /** Viewer feedback used by the "مهتم / غير مهتم" menu. */
+  feedback?: PostFeedback | null;
+
   liked_by_me?: boolean;
   saved_by_me?: boolean;
   reposted_by_me?: boolean;
@@ -38,6 +46,8 @@ export type Post = {
   likes?: { user_id: string }[];
   comments?: PostComment[];
 };
+
+export type PostFeedback = "interested" | "not_interested";
 
 export type PostComment = {
   id: string;
