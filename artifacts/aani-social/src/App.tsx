@@ -1312,7 +1312,8 @@ function PostCard({
       : reportReason;
 
     try {
-      const { error } = await supabase.from('reports').insert({
+      // Full shape once migration 20261027000000 is applied.
+      let { error } = await supabase.from('reports').insert({
         post_id: post.id,
         reported_user_id: post.user_id,
         reporter_id: currentUserId,
@@ -1320,12 +1321,25 @@ function PostCard({
         status: 'pending',
       });
 
+      // Older/live deployments expose only (post_id, user_id, reason).
+      // PGRST204 = column absent from the schema cache.
+      const missingColumn =
+        (error as { code?: string } | null)?.code === 'PGRST204' ||
+        (error as { code?: string } | null)?.code === '42703';
+      if (missingColumn) {
+        ({ error } = await supabase.from('reports').insert({
+          post_id: post.id,
+          user_id: currentUserId,
+          reason,
+        }));
+      }
+
       if (error) throw error;
       toast.success('تم إرسال البلاغ، شكراً لمساعدتك في الحفاظ على آني.');
       setShowReport(false);
       setReportDetails('');
-    } catch (reason_) {
-      const code = (reason_ as { code?: string } | null)?.code;
+    } catch (reportError) {
+      const code = (reportError as { code?: string } | null)?.code;
       if (code === '23505') {
         toast.info('سبق أن أبلغت عن هذا المنشور.');
         setShowReport(false);
@@ -1333,6 +1347,8 @@ function PostCard({
         toast.warning(
           'لم يتم تجهيز جدول البلاغات بعد في قاعدة البيانات. طبّق ملف الترحيل supabase/migrations لتفعيل الإبلاغ.',
         );
+      } else if (code === '42501') {
+        toast.warning('تعذر تسجيل البلاغ: صلاحيات الجدول تمنع الإرسال. راجع سياسات RLS في supabase/migrations.');
       } else {
         toast.error('تعذر إرسال البلاغ، حاول مرة أخرى.');
       }
