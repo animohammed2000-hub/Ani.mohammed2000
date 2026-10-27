@@ -28,6 +28,13 @@ import {
   type ShareFriend,
   type ShareFriendRelation,
 } from '@/lib/interactions';
+import {
+  MIGRATION_HINT,
+  hiddenPostIds,
+  hydrateFeedback,
+  uploadPostAudio,
+  usePostControls,
+} from '@/lib/postControls';
 import NotFound from '@/pages/not-found';
 import '@/index.css';
 
