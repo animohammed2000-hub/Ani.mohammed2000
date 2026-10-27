@@ -411,10 +411,13 @@ export function usePostControls(post: Post, userId: string): UsePostControls {
   const rowAudio: PostAudio | null =
     post.audio_url ? { url: post.audio_url, title: post.audio_title ?? "مقطع صوتي" } : null;
 
+  // The store returns a primitive string so React can compare snapshots by
+  // value (returning a fresh object would re-render forever).
   const snapshot = useSyncExternalStore(
     subscribe,
     () => {
       void version;
+
       const feedback = interactionCache.has(key)
         ? interactionCache.get(key) ?? null
         : readLocalFeedback(userId)[post.id] ?? null;
@@ -424,34 +427,31 @@ export function usePostControls(post: Post, userId: string): UsePostControls {
 
       const commentsDisabled =
         cachedControls?.commentsDisabled ??
-        (localControls.commentsDisabled !== undefined ? localControls.commentsDisabled : Boolean(post.comments_disabled));
+        (localControls.commentsDisabled !== undefined
+          ? localControls.commentsDisabled
+          : Boolean(post.comments_disabled));
 
       const audio =
         cachedControls?.audio !== undefined
-          ? cachedControls.audio
+          ? cachedControls.audio ?? null
           : localControls.audio !== undefined
             ? localControls.audio ?? null
             : rowAudio;
 
-      return `${feedback ?? "-"}|${commentsDisabled ? 1 : 0}|${audio?.url ?? "-"}`;
+      return `${feedback ?? "-"}|${commentsDisabled ? 1 : 0}|${audio?.url ?? "-"}|${audio?.title ?? "-"}`;
     },
-    () => EMPTY_STATE_KEY,
+    () => "-|0|-|-",
   );
 
-  const [feedbackPart, commentsPart, audioPart] = snapshot.split("|");
-  const audio: PostAudio | null = audioPart === "-" ? null : { url: audioPart, title: "" };
-  void audio;
+  const [feedbackPart, commentsPart, audioPart, audioTitlePart] = snapshot.split("|");
 
   const feedback: PostFeedback | null =
     feedbackPart === "interested" || feedbackPart === "not_interested" ? feedbackPart : null;
 
-  const resolvedAudio = (() => {
-    const cachedControls = postCache.get(post.id);
-    if (cachedControls && cachedControls.audio !== undefined) return cachedControls.audio;
-    const localControls = readLocalControls(post.id);
-    if (localControls.audio !== undefined) return localControls.audio ?? null;
-    return rowAudio;
-  })();
+  const resolvedAudio: PostAudio | null =
+    audioPart === "-"
+      ? null
+      : { url: audioPart, title: audioTitlePart === "-" ? "مقطع صوتي" : audioTitlePart };
 
   const pending = pendingKeys.has(key) || pendingKeys.has(post.id);
 
