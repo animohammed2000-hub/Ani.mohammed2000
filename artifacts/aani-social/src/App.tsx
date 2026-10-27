@@ -182,7 +182,6 @@ export function AuthPage({ mode, afterAuth }: { mode: 'login' | 'signup'; afterA
       if (signUp) {
         const currentOrigin = typeof window !== 'undefined' ? window.location.origin : undefined;
 
-        // المحاولة الأولى: استخدام origin الموقع للحفاظ على سلاسة التوجيه
         const { data, error: authError } = await supabase.auth.signUp({
           email: email.trim(),
           password,
@@ -195,40 +194,13 @@ export function AuthPage({ mode, afterAuth }: { mode: 'login' | 'signup'; afterA
           },
         });
 
-        if (authError) {
-          // آلية الأمان الفائقة: إذا رفض Supabase مسار التوجيه (Invalid path)
-          const isPathError = /invalid path|request url|redirect/i.test(authError.message || '');
-          if (isPathError) {
-            console.warn('تجاوز خطأ مسار التوجيه وإعادة المحاولة التلقائية بدون emailRedirectTo...');
-            const { data: retryData, error: retryError } = await supabase.auth.signUp({
-              email: email.trim(),
-              password,
-              options: {
-                data: {
-                  username: username.trim().toLowerCase(),
-                  full_name: fullName.trim()
-                }
-              }
-            });
-
-            if (retryError) throw retryError;
-
-            if (retryData.session) {
-              afterAuth();
-              setLocation('/feed');
-            } else {
-              setSuccess('تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول مباشرة.');
-            }
-            return;
-          }
-          throw authError;
-        }
+        if (authError) throw authError;
 
         if (data.session) { 
           afterAuth(); 
           setLocation('/feed'); 
         } else { 
-          setSuccess('تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول مباشرة.'); 
+          setSuccess('تم إنشاء الحساب. افتح رسالة التفعيل التي أرسلناها إلى بريدك الإلكتروني، ثم سجّل الدخول.');
         }
       } else {
         const { error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
@@ -237,7 +209,16 @@ export function AuthPage({ mode, afterAuth }: { mode: 'login' | 'signup'; afterA
         setLocation('/feed');
       }
     } catch (reason: any) {
-      setError(reason?.message || 'حدث خطأ في الاتصال. حاول مرة أخرى.');
+      const message = reason?.message || '';
+      if (/profiles_username_lower_idx|duplicate key|unique constraint/i.test(message)) {
+        setError('اسم المستخدم مستخدم بالفعل. اختر اسمًا آخر ثم حاول مجددًا.');
+      } else if (/invalid path|request url|redirect/i.test(message)) {
+        setError('رابط التفعيل غير مسموح في إعدادات Supabase. أضف نطاق الموقع المنشور إلى Auth ثم URL Configuration ثم Redirect URLs.');
+      } else if (/database error saving new user/i.test(message)) {
+        setError('تعذر إنشاء ملف الحساب. جرّب اسم مستخدم آخر، وإذا استمر الخطأ فتحقق من تطبيق مخطط profiles ومشغّل إنشاء الحساب في Supabase.');
+      } else {
+        setError(message || 'حدث خطأ في الاتصال. حاول مرة أخرى.');
+      }
     } finally { setBusy(false); }
   };
 
