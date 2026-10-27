@@ -107,13 +107,29 @@ create trigger aani_post_feedback_touch
 -- ---------------------------------------------------------------------
 -- The client hides the panel when posts.comments_disabled is true; this
 -- guard makes the rule authoritative at the database level too.
-drop policy if exists aani_comments_insert_open on public.comments;
-create policy aani_comments_insert_open on public.comments
-  for insert with check (
-    auth.uid() = user_id
-    and not exists (
-      select 1 from public.posts p
-      where p.id = comments.post_id
-        and p.comments_disabled = true
-    )
-  );
+--
+-- Implemented as a trigger, not a policy: RLS policies are OR'ed together,
+-- so adding a second permissive INSERT policy would widen access instead of
+-- restricting it.
+create or replace function public.aani_block_closed_comments()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $
+begin
+  if exists (
+    select 1 from public.posts p
+    where p.id = new.post_id
+      and p.comments_disabled = true
+  ) then
+    raise exception 'comments are disabled for this post'
+      using errcode = '42501';
+  end if;
+  return new;
+end $;
+
+drop trigger if exists aani_comments_closed_guard on public.comments;
+create trigger aani_comments_closed_guard
+  before insert on public.comments
+  for each row execute function public.aani_block_closed_comments();
