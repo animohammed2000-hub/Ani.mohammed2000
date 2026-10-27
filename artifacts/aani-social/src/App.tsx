@@ -1,4 +1,3 @@
-import './index.css';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, Route, Router as WouterRouter, Switch, useLocation } from 'wouter';
 import { 
@@ -9,17 +8,49 @@ import {
   Bot, Loader2, Play, Flag, EyeOff
 } from 'lucide-react';
 
-import { Toaster } from '@/components/ui/toaster';
+import { Toaster, toast } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { supabase, supabaseConfigured, storageBucket } from '@/lib/supabase';
-import { displayName, formatDate, normalizeProfile, type Post, type Profile } from '@/lib/types';
+import { displayName, formatCount, formatDate, normalizeProfile, type Post, type Profile } from '@/lib/types';
+import {
+  copyPostLink,
+  decoratePosts,
+  loadShareFriends,
+  postShareText,
+  recordShare,
+  sendPostToFriend,
+  sharePost,
+  sharePostToApp,
+  useInteractionRealtime,
+  usePostComments,
+  usePostInteractions,
+  useSavedPosts,
+  type ShareChannel,
+  type ShareFriend,
+  type ShareFriendRelation,
+} from '@/lib/interactions';
+import {
+  MIGRATION_HINT,
+  hiddenPostIds,
+  hydrateFeedback,
+  uploadPostAudio,
+  usePostControls,
+} from '@/lib/postControls';
+import {
+  buildLegacyReportPayload,
+  buildReportPayload,
+  classifyReportFailure,
+  reportFailureMessage,
+  shouldRetryWithLegacyShape,
+  type ReportErrorLike,
+} from '@/lib/reportSubmit';
 import NotFound from '@/pages/not-found';
 import '@/index.css';
 
-// --- المساعد الذكي الآمن ---
+// --- مكون المساعد الذكي الآمن المربوط بـ Supabase Edge Function ---
 function AIAssistantModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; error?: boolean }>>([]);
   const [input, setInput] = useState('');
@@ -57,9 +88,16 @@ function AIAssistantModal({ open, onClose }: { open: boolean; onClose: () => voi
       if (error) {
         const context = (error as { context?: unknown }).context;
         if (context instanceof Response) {
-          const details = (await context.clone().json().catch(() => null)) as { error?: string | { message?: string } } | null;
+          const details = (await context.clone().json().catch(() => null)) as
+            | { error?: string | { message?: string } }
+            | null;
           const responseError = details?.error;
-          const message = typeof responseError === 'string' ? responseError : responseError && typeof responseError === 'object' ? responseError.message : undefined;
+          const message =
+            typeof responseError === 'string'
+              ? responseError
+              : responseError && typeof responseError === 'object'
+                ? responseError.message
+                : undefined;
           if (message) throw new Error(message);
         }
         throw new Error(error.message || 'تعذر الاتصال بمركز المساعد الذكي.');
@@ -73,7 +111,11 @@ function AIAssistantModal({ open, onClose }: { open: boolean; onClose: () => voi
     } catch (err: any) {
       setMessages((current) => [
         ...current,
-        { role: 'assistant', content: err.message || 'حدث خطأ في الاتصال، حاول مرة أخرى.', error: true },
+        {
+          role: 'assistant',
+          content: err.message || 'حدث خطأ في الاتصال، حاول مرة أخرى.',
+          error: true,
+        },
       ]);
     } finally {
       setLoading(false);
@@ -150,7 +192,7 @@ function AIAssistantModal({ open, onClose }: { open: boolean; onClose: () => voi
 // --- المكونات المساعدة ---
 function Avatar({ profile, large = false, storyBorder = false, isCloseFriends = false, extraLarge = false }: { profile?: Partial<Profile> | null; large?: boolean; storyBorder?: boolean; isCloseFriends?: boolean; extraLarge?: boolean }) {
   const initials = (displayName(profile).replace('@', '').trim().slice(0, 2) || 'آ').toUpperCase();
-  const sizeClass = extraLarge ? 'w-16 h-16 text-lg' : large ? 'w-11 h-11 text-base' : 'w-8 h-8 text-xs';
+  const sizeClass = extraLarge ? 'w-16 h-16 text-lg' : large ? 'w-12 h-12 text-base' : 'w-8 h-8 text-xs';
   const borderClass = isCloseFriends 
     ? 'ring-2 ring-emerald-500 ring-offset-2 ring-offset-zinc-900' 
     : storyBorder 
@@ -180,18 +222,10 @@ export function AuthPage({ mode, afterAuth }: { mode: 'login' | 'signup'; afterA
     setBusy(true); setError(''); setSuccess('');
     try {
       if (signUp) {
-        const currentOrigin = typeof window !== 'undefined' ? window.location.origin : undefined;
-
         const { data, error: authError } = await supabase.auth.signUp({
           email: email.trim(),
           password,
-          options: { 
-            ...(currentOrigin ? { emailRedirectTo: currentOrigin } : {}),
-            data: { 
-              username: username.trim().toLowerCase(), 
-              full_name: fullName.trim() 
-            } 
-          },
+          options: { data: { username: username.trim().toLowerCase(), full_name: fullName.trim() } },
         });
 
         if (authError) throw authError;
@@ -205,8 +239,7 @@ export function AuthPage({ mode, afterAuth }: { mode: 'login' | 'signup'; afterA
       } else {
         const { error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
         if (authError) throw authError;
-        afterAuth(); 
-        setLocation('/feed');
+        afterAuth(); setLocation('/feed');
       }
     } catch (reason: any) {
       const message = reason?.message || '';
