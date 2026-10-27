@@ -1342,27 +1342,59 @@ function PostCard({
           {showMenu && (
             <div
               role="menu"
-              className="absolute left-0 z-40 mt-1 w-48 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-950/95 py-1 text-[11px] shadow-2xl backdrop-blur"
+              className="absolute left-0 z-40 mt-1 w-56 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-950/95 py-1 text-[11px] shadow-2xl backdrop-blur"
             >
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => void handleCopyLink()}
-                className="flex w-full items-center gap-2 px-3 py-2 text-start text-zinc-200 transition hover:bg-zinc-800"
-              >
-                <Link2 size={13} /> نسخ رابط المنشور
-              </button>
-
               {isOwner ? (
                 <>
+                  <p className="px-3 pb-1 pt-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-500">
+                    إدارة المنشور
+                  </p>
                   <button
                     type="button"
                     role="menuitem"
                     onClick={openEditModal}
                     className="flex w-full items-center gap-2 px-3 py-2 text-start text-zinc-200 transition hover:bg-zinc-800"
                   >
-                    <Edit3 size={13} /> تعديل المنشور
+                    {post.type === 'reel' ? <Video size={13} /> : post.type === 'photo' ? <ImagePlus size={13} /> : <Edit3 size={13} />}
+                    {post.type === 'reel'
+                      ? 'استبدال الفيديو / النص'
+                      : post.type === 'photo'
+                        ? 'استبدال الصورة / النص'
+                        : 'تعديل النص'}
                   </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setShowMenu(false);
+                      setAudioFile(null);
+                      setShowAudio(true);
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-start text-zinc-200 transition hover:bg-zinc-800"
+                  >
+                    <Music size={13} /> {controls.audio ? 'تغيير المقطع الصوتي' : 'إضافة موسيقى / صوت'}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setShowMenu(false);
+                      void controls.toggleComments();
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-start text-zinc-200 transition hover:bg-zinc-800"
+                  >
+                    <MessageSquare size={13} />
+                    {commentsDisabled ? 'فتح التعليقات' : 'إغلاق التعليقات'}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void handleCopyLink()}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-start text-zinc-200 transition hover:bg-zinc-800"
+                  >
+                    <Link2 size={13} /> نسخ رابط المنشور
+                  </button>
+                  <div className="my-1 h-px bg-zinc-800" />
                   <button
                     type="button"
                     role="menuitem"
@@ -1378,17 +1410,74 @@ function PostCard({
                   </button>
                 </>
               ) : (
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setShowMenu(false);
-                    setShowReport(true);
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-start text-amber-300 transition hover:bg-amber-500/10"
-                >
-                  <Flag size={13} /> إبلاغ عن المنشور
-                </button>
+                <>
+                  <p className="px-3 pb-1 pt-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-500">
+                    تخصيص المحتوى
+                  </p>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    aria-pressed={controls.feedback === 'interested'}
+                    onClick={() => {
+                      setShowMenu(false);
+                      void controls.setFeedback('interested');
+                    }}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-start transition hover:bg-zinc-800 ${
+                      controls.feedback === 'interested' ? 'font-bold text-pink-400' : 'text-zinc-200'
+                    }`}
+                  >
+                    <Star size={13} fill={controls.feedback === 'interested' ? 'currentColor' : 'none'} />
+                    مهتم
+                    {controls.feedback === 'interested' && <Check size={12} className="ms-auto" />}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    aria-pressed={controls.feedback === 'not_interested'}
+                    onClick={() => {
+                      setShowMenu(false);
+                      void controls.setFeedback('not_interested');
+                    }}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-start transition hover:bg-zinc-800 ${
+                      controls.feedback === 'not_interested' ? 'font-bold text-zinc-100' : 'text-zinc-200'
+                    }`}
+                  >
+                    <X size={13} />
+                    غير مهتم
+                    {controls.feedback === 'not_interested' && <Check size={12} className="ms-auto" />}
+                  </button>
+                  <p className="px-3 pb-1.5 pt-0.5 text-[10px] leading-relaxed text-zinc-500">
+                    يساعدنا هذا في تحسين ما يظهر لك.
+                  </p>
+                  <div className="my-1 h-px bg-zinc-800" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void handleCopyLink()}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-start text-zinc-200 transition hover:bg-zinc-800"
+                  >
+                    <Link2 size={13} /> نسخ رابط المنشور
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setShowShare(true)}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-start text-zinc-200 transition hover:bg-zinc-800"
+                  >
+                    <Send size={13} /> إرسال إلى صديق
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setShowMenu(false);
+                      setShowReport(true);
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-start text-amber-300 transition hover:bg-amber-500/10"
+                  >
+                    <Flag size={13} /> إبلاغ عن المنشور
+                  </button>
+                </>
               )}
             </div>
           )}
