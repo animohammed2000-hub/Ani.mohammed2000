@@ -1,0 +1,5 @@
+[build]
+  command = "pnpm --filter @workspace/aani-social... run build"
+  # Paths are resolved from the repository root (the base directory),
+  # while Vite writes its output inside this package.
+  publish = "artifacts/aani-social/dist/public"
