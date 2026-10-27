@@ -4,7 +4,7 @@ import {
   ArrowUpLeft, Bell, Bookmark, ChevronDown, ChevronUp, Clock, Film, Filter, Heart, Home, 
   ImagePlus, MessageCircle, MessageSquare, MoreVertical, Plus, Repeat, Search, Send, 
   Settings, Share2, Sparkles, Star, Trash2, UserRound, Video, X, Edit3, SendHorizontal,
-  Bot, Loader2, Code, Link2, Flag, Check, Copy, Mail
+  Bot, Loader2, Code, Link2, Flag, Check, Copy, Mail, Music, Pause, Play
 } from 'lucide-react';
 
 import { Toaster, toast } from 'sonner';
