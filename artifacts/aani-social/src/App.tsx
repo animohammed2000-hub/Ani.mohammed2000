@@ -1173,6 +1173,7 @@ function PostCard({
   const [reportReason, setReportReason] = useState('محتوى غير مناسب');
   const [reportDetails, setReportDetails] = useState('');
   const [reporting, setReporting] = useState(false);
+  const [showAudio, setShowAudio] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
