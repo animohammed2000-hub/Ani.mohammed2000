@@ -1978,6 +1978,22 @@ function usePosts(
         rows = await mergeProfileReposts(rows, targetUserId);
       }
 
+      // "غير مهتم" — posts the viewer muted disappear from their own feed
+      // (never from their own profile page).
+      if (query === 'feed' && currentUserId) {
+        const hidden = hiddenPostIds(currentUserId);
+        if (hidden.size) {
+          rows = rows.filter((row) => !hidden.has(String(row.id)));
+        }
+      }
+
+      if (currentUserId) {
+        void hydrateFeedback(
+          rows.map((row) => String(row.id)),
+          currentUserId,
+        );
+      }
+
       const decorated = await decoratePosts(rows, currentUserId ?? '');
       setPosts(decorated);
     } catch {
