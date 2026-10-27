@@ -1259,7 +1259,6 @@ function PostCard({
 
   const handleCopyLink = async () => {
     setShowMenu(false);
-    const url = `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/post/${post.id}`;
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(url);
