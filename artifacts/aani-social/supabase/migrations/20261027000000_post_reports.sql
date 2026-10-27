@@ -51,12 +51,23 @@ alter table public.reports alter column reporter_id set not null;
 alter table public.reports alter column user_id drop not null;
 
 -- ---------------------------------------------------------------------
--- Foreign keys (guarded: inline constraints were skipped on legacy tables)
+-- Foreign keys
+-- Guarded by "does a FK already cover this column", not by constraint
+-- name: `create table if not exists` above may have created inline FKs
+-- with auto-generated names on a fresh database.
 -- ---------------------------------------------------------------------
-do $$
+do $
 begin
   if not exists (
-    select 1 from pg_constraint where conname = 'aani_reports_post_fk'
+    select 1
+      from pg_constraint c
+      join pg_class t on t.oid = c.conrelid
+      join pg_namespace n on n.oid = t.relnamespace
+     where n.nspname = 'public'
+       and t.relname = 'reports'
+       and c.contype = 'f'
+       and c.conkey = array[(select attnum from pg_attribute
+                              where attrelid = t.oid and attname = 'post_id')]
   ) then
     alter table public.reports
       add constraint aani_reports_post_fk
@@ -64,7 +75,15 @@ begin
   end if;
 
   if not exists (
-    select 1 from pg_constraint where conname = 'aani_reports_reporter_fk'
+    select 1
+      from pg_constraint c
+      join pg_class t on t.oid = c.conrelid
+      join pg_namespace n on n.oid = t.relnamespace
+     where n.nspname = 'public'
+       and t.relname = 'reports'
+       and c.contype = 'f'
+       and c.conkey = array[(select attnum from pg_attribute
+                              where attrelid = t.oid and attname = 'reporter_id')]
   ) then
     alter table public.reports
       add constraint aani_reports_reporter_fk
@@ -72,13 +91,21 @@ begin
   end if;
 
   if not exists (
-    select 1 from pg_constraint where conname = 'aani_reports_reported_user_fk'
+    select 1
+      from pg_constraint c
+      join pg_class t on t.oid = c.conrelid
+      join pg_namespace n on n.oid = t.relnamespace
+     where n.nspname = 'public'
+       and t.relname = 'reports'
+       and c.contype = 'f'
+       and c.conkey = array[(select attnum from pg_attribute
+                              where attrelid = t.oid and attname = 'reported_user_id')]
   ) then
     alter table public.reports
       add constraint aani_reports_reported_user_fk
       foreign key (reported_user_id) references public.profiles(id) on delete set null;
   end if;
-end $$;
+end $;
 
 create unique index if not exists aani_reports_post_reporter_unique_idx
   on public.reports (post_id, reporter_id);
