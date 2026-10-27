@@ -1590,16 +1590,32 @@ function PostCard({
               placeholder="اكتب شيئاً..."
             />
 
-            <label className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 p-2.5 rounded-xl cursor-pointer hover:bg-zinc-800 text-xs text-zinc-300">
-              <ImagePlus size={16} className="text-purple-400" />
-              <span className="truncate">{editFile ? editFile.name : 'استبدال الصورة الحالية (اختياري)'}</span>
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(event) => setEditFile(event.target.files?.[0] ?? null)}
-              />
-            </label>
+            {isMediaPost ? (
+              <label className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 p-2.5 rounded-xl cursor-pointer hover:bg-zinc-800 text-xs text-zinc-300">
+                {post.type === 'reel' ? (
+                  <Video size={16} className="text-purple-400" />
+                ) : (
+                  <ImagePlus size={16} className="text-purple-400" />
+                )}
+                <span className="truncate">
+                  {editFile
+                    ? editFile.name
+                    : post.type === 'reel'
+                      ? 'استبدال الفيديو الحالي (اختياري)'
+                      : 'استبدال الصورة الحالية (اختياري)'}
+                </span>
+                <input
+                  type="file"
+                  accept={post.type === 'reel' ? 'video/*' : 'image/*'}
+                  className="hidden"
+                  onChange={(event) => setEditFile(event.target.files?.[0] ?? null)}
+                />
+              </label>
+            ) : (
+              <p className="text-[10px] leading-relaxed text-zinc-500">
+                منشور نصي — يمكنك تعديل النص فقط.
+              </p>
+            )}
 
             <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800">
               <button
