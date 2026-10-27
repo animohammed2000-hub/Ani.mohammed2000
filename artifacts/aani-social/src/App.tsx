@@ -1175,6 +1175,9 @@ function PostCard({
   const [reportDetails, setReportDetails] = useState('');
   const [reporting, setReporting] = useState(false);
   const [showAudio, setShowAudio] = useState(false);
+  const [audioPlaying, setAudioPlaying] = useState(false);
+  const [audioProgress, setAudioProgress] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
