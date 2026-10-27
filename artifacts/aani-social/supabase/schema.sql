@@ -561,7 +561,6 @@ begin
 end $$;
 
 -- =====================================================================
--- =====================================================================
 -- Post reports (إبلاغ عن المنشورات)
 -- Backs the post action dropdown "Report" option for non-owner users.
 -- Idempotent: safe to run multiple times.
