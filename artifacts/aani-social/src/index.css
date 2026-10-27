@@ -178,10 +178,14 @@ body {
   gap: 14px;
   justify-content: flex-start;
   width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.post-actions-right::-webkit-scrollbar { display: none; }
 
 .post-action-btn {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 5px;
   background: transparent;

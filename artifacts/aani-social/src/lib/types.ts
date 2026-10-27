@@ -25,6 +25,7 @@ export type Post = {
   liked_by_me?: boolean;
   saved_by_me?: boolean;
   reposted_by_me?: boolean;
+  feedback_by_me?: 'interested' | 'not_interested' | null;
 
   likes?: { user_id: string }[];
   comments?: PostComment[];

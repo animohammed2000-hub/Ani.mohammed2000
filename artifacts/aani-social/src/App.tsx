@@ -4,12 +4,16 @@ import { Link, Route, Router as WouterRouter, Switch, useLocation } from 'wouter
 import { 
   ArrowUpLeft, Bell, Bookmark, ChevronDown, ChevronUp, Clock, Film, Filter, Heart, Home, 
   ImagePlus, MessageCircle, MessageSquare, MoreVertical, Plus, Repeat, Search, Send, 
-  Settings, Sparkles, Star, Trash2, UserRound, Video, X, SendHorizontal,
+  Settings, Sparkles, Star, Trash2, UserRound, Video, X, SendHorizontal, Pencil,
+  ThumbsUp,
   Bot, Loader2, Play, Flag, EyeOff
 } from 'lucide-react';
 
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { supabase, supabaseConfigured, storageBucket } from '@/lib/supabase';
 import { displayName, formatDate, normalizeProfile, type Post, type Profile } from '@/lib/types';
 import NotFound from '@/pages/not-found';
@@ -816,14 +820,20 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
   const [commentText, setCommentText] = useState('');
   const [comments, setComments] = useState<any[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [commentsCount, setCommentsCount] = useState(post.comments_count || 0);
+  const [repostsCount, setRepostsCount] = useState(post.reposts_count || 0);
+  const [feedback, setFeedback] = useState<Post['feedback_by_me']>(post.feedback_by_me || null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editContent, setEditContent] = useState(post.content || '');
+  const [replacementFile, setReplacementFile] = useState<File | null>(null);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const trackRef = useRef<HTMLDivElement>(null);
 
   // Optimistic UI states
-  const [liked, setLiked] = useState((post.likes || []).some(like => like.user_id === currentUserId));
-  const [likesCount, setLikesCount] = useState(post.likes?.length || 0);
-  const [reposted, setReposted] = useState(false);
-  const [bookmarked, setBookmarked] = useState(false);
+  const [liked, setLiked] = useState(post.liked_by_me ?? (post.likes || []).some(like => like.user_id === currentUserId));
+  const [likesCount, setLikesCount] = useState(post.likes_count ?? post.likes?.length ?? 0);
+  const [reposted, setReposted] = useState(post.reposted_by_me ?? false);
+  const [bookmarked, setBookmarked] = useState(post.saved_by_me ?? false);
   const [isAnimating, setIsAnimating] = useState(false);
 
   const urls = useMemo(() => {
@@ -833,11 +843,13 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
   }, [post.media_urls, post.media_url]);
 
   useEffect(() => {
-    setLiked((post.likes || []).some(like => like.user_id === currentUserId));
-    setLikesCount(post.likes?.length || 0);
-    if (!supabaseConfigured) return;
-    void supabase.from('reposts').select('id').eq('post_id', post.id).eq('user_id', currentUserId).maybeSingle().then(({ data }) => setReposted(Boolean(data)));
-    void supabase.from('bookmarks').select('id').eq('post_id', post.id).eq('user_id', currentUserId).maybeSingle().then(({ data }) => setBookmarked(Boolean(data)));
+    setLiked(post.liked_by_me ?? (post.likes || []).some(like => like.user_id === currentUserId));
+    setLikesCount(post.likes_count ?? post.likes?.length ?? 0);
+    setReposted(post.reposted_by_me ?? false);
+    setBookmarked(post.saved_by_me ?? false);
+    setCommentsCount(post.comments_count || 0);
+    setRepostsCount(post.reposts_count || 0);
+    setFeedback(post.feedback_by_me || null);
   }, [post, currentUserId]);
 
   const handleScroll = useCallback(() => {
@@ -863,7 +875,11 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
     setIsAnimating(true);
     setTimeout(() => setIsAnimating(false), 450);
 
-    if (!supabaseConfigured) return;
+    if (!supabaseConfigured) {
+      setLiked(prevLiked);
+      setLikesCount(prevCount);
+      return;
+    }
     try {
       if (prevLiked) {
         const { error } = await supabase.from('likes').delete().eq('post_id', post.id).eq('user_id', currentUserId);
@@ -880,17 +896,27 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
 
   const toggleRepost = async () => {
     const prevReposted = reposted;
-    setReposted(!prevReposted);
+    const prevCount = repostsCount;
+    const nextReposted = !prevReposted;
+    setReposted(nextReposted);
+    setRepostsCount(prevCount + (nextReposted ? 1 : -1));
 
-    if (!supabaseConfigured) return;
+    if (!supabaseConfigured) {
+      setReposted(prevReposted);
+      setRepostsCount(prevCount);
+      return;
+    }
     try {
       if (prevReposted) {
-        await supabase.from('reposts').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+        const { error } = await supabase.from('reposts').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+        if (error) throw error;
       } else {
-        await supabase.from('reposts').insert({ post_id: post.id, user_id: currentUserId });
+        const { error } = await supabase.from('reposts').insert({ post_id: post.id, user_id: currentUserId });
+        if (error) throw error;
       }
     } catch {
       setReposted(prevReposted);
+      setRepostsCount(prevCount);
     }
   };
 
@@ -898,12 +924,17 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
     const prevBookmarked = bookmarked;
     setBookmarked(!prevBookmarked);
 
-    if (!supabaseConfigured) return;
+    if (!supabaseConfigured) {
+      setBookmarked(prevBookmarked);
+      return;
+    }
     try {
       if (prevBookmarked) {
-        await supabase.from('bookmarks').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+        const { error } = await supabase.from('bookmarks').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+        if (error) throw error;
       } else {
-        await supabase.from('bookmarks').insert({ post_id: post.id, user_id: currentUserId });
+        const { error } = await supabase.from('bookmarks').insert({ post_id: post.id, user_id: currentUserId });
+        if (error) throw error;
       }
     } catch {
       setBookmarked(prevBookmarked);
@@ -932,22 +963,109 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
     event.preventDefault();
     if (!supabaseConfigured || !commentText.trim()) return;
     setBusy(true);
-    await supabase.from('comments').insert({ post_id: post.id, user_id: currentUserId, content: commentText.trim() });
-    setCommentText('');
-    await loadComments();
-    setBusy(false);
+    try {
+      const { error } = await supabase.from('comments').insert({ post_id: post.id, user_id: currentUserId, content: commentText.trim() });
+      if (error) throw error;
+      setCommentText('');
+      setCommentsCount(count => count + 1);
+      await loadComments();
+    } catch {
+      alert('تعذر نشر التعليق. حاول مرة أخرى.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveEdit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabaseConfigured || busy) return;
+    const content = editContent.trim();
+    if (post.type === 'text' && !content) {
+      alert('لا يمكن أن يكون المنشور النصي فارغًا.');
+      return;
+    }
+
+    setBusy(true);
+    try {
+      let mediaUrl = post.media_url;
+      let mediaUrls = post.media_urls?.length ? post.media_urls : (post.media_url ? [post.media_url] : []);
+      if (replacementFile) {
+        const expectedType = post.type === 'photo' ? 'image/' : 'video/';
+        if (!replacementFile.type.startsWith(expectedType)) {
+          throw new Error(post.type === 'photo' ? 'اختر صورة بدلًا من الفيديو.' : 'اختر فيديو بدلًا من الصورة.');
+        }
+        const safeName = replacementFile.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+        const path = `${currentUserId}/${Date.now()}-${safeName}`;
+        const { error: uploadError } = await supabase.storage.from(storageBucket).upload(path, replacementFile, {
+          upsert: true,
+          contentType: replacementFile.type,
+        });
+        if (uploadError) throw uploadError;
+        mediaUrl = supabase.storage.from(storageBucket).getPublicUrl(path).data.publicUrl;
+        mediaUrls = [mediaUrl];
+      }
+
+      const { error } = await supabase.from('posts').update({
+        content,
+        media_url: post.type === 'text' ? null : mediaUrl,
+        media_urls: post.type === 'text' ? null : mediaUrls,
+      }).eq('id', post.id).eq('user_id', currentUserId);
+      if (error) throw error;
+      setShowEditModal(false);
+      setReplacementFile(null);
+      onRefresh();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'تعذر تعديل المنشور. حاول مرة أخرى.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveFeedback = async (value: 'interested' | 'not_interested') => {
+    if (!supabaseConfigured) return;
+    const previousFeedback = feedback;
+    const nextFeedback = previousFeedback === value ? null : value;
+    setFeedback(nextFeedback);
+    try {
+      const result = nextFeedback
+        ? await supabase.from('post_feedback').upsert({ post_id: post.id, user_id: currentUserId, feedback: nextFeedback }, { onConflict: 'post_id,user_id' })
+        : await supabase.from('post_feedback').delete().eq('post_id', post.id).eq('user_id', currentUserId);
+      if (result.error) throw result.error;
+    } catch {
+      setFeedback(previousFeedback);
+      alert('تعذر حفظ اختيارك. حاول مرة أخرى.');
+    }
+  };
+
+  const reportPost = async () => {
+    const reason = window.prompt('ما سبب الإبلاغ عن هذا المنشور؟');
+    if (!reason?.trim() || !supabaseConfigured) return;
+    const { error } = await supabase.from('post_reports').insert({
+      post_id: post.id,
+      reporter_id: currentUserId,
+      reason: reason.trim(),
+    });
+    if (error) {
+      alert(error.code === '23505' ? 'سبق أن أبلغت عن هذا المنشور.' : 'تعذر إرسال البلاغ. حاول مرة أخرى.');
+      return;
+    }
+    alert('تم إرسال البلاغ للمراجعة.');
   };
 
   const handleDeletePost = async () => {
     if (!supabaseConfigured) return;
     if (confirm('هل أنت تأكد من رغبتك في حذف هذا المنشور؟')) {
-      await supabase.from('posts').delete().eq('id', post.id);
+      const { error } = await supabase.from('posts').delete().eq('id', post.id).eq('user_id', currentUserId);
+      if (error) {
+        alert('تعذر حذف المنشور. حاول مرة أخرى.');
+        return;
+      }
       onRefresh();
     }
   };
 
   return (
-    <article className="post-card fade-up">
+    <article className="post-card fade-up relative">
       <header className="flex items-start gap-3 w-full">
         <Avatar profile={post.author} large />
         <div className="flex-1 min-w-0">
@@ -960,11 +1078,29 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
             <time className="text-zinc-500 text-xs whitespace-nowrap">{formatDate(post.created_at)}</time>
           </div>
         </div>
-        {post.user_id === currentUserId && (
-          <button onClick={handleDeletePost} className="text-zinc-500 hover:text-red-400 p-1 transition shrink-0" title="حذف المنشور">
-            <Trash2 size={16} />
-          </button>
-        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" className="absolute left-3 top-3 p-1 text-zinc-500 transition hover:text-white" aria-label="خيارات المنشور">
+              <MoreVertical size={18} />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {post.user_id === currentUserId ? (
+              <>
+                <DropdownMenuItem onSelect={() => { setEditContent(post.content || ''); setReplacementFile(null); setShowEditModal(true); }}>
+                  <Pencil size={16} /> تعديل المنشور
+                </DropdownMenuItem>
+                <DropdownMenuItem className="text-red-400 focus:text-red-400" onSelect={() => void handleDeletePost()}>
+                  <Trash2 size={16} /> حذف المنشور
+                </DropdownMenuItem>
+              </>
+            ) : (
+              <DropdownMenuItem className="text-red-400 focus:text-red-400" onSelect={() => void reportPost()}>
+                <Flag size={16} /> إبلاغ عن المنشور
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </header>
 
       {post.content && (
@@ -1007,7 +1143,7 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
 
       {/* شريط الأزرار المتجمع جهة اليمين */}
       <footer className="border-t border-zinc-800/80 pt-2.5 mt-3">
-        <div className="post-actions-right flex items-center gap-4 justify-start w-full">
+        <div className="post-actions-right flex flex-nowrap items-center gap-4 justify-start w-full overflow-x-auto">
           {/* 1. الإعجاب */}
           <button
             type="button"
@@ -1027,12 +1163,13 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
           {/* 2. التعليقات */}
           <button type="button" className="post-action-btn flex items-center gap-1.5 text-zinc-400 hover:text-blue-400 transition" onClick={() => comments === null ? void loadComments() : setComments(null)}>
             <MessageSquare size={18} />
-            <span className="text-xs">{comments?.length || post.comments?.length || 0}</span>
+            <span className="text-xs">{commentsCount}</span>
           </button>
 
           {/* 3. إعادة النشر */}
           <button type="button" className={`post-action-btn flex items-center gap-1.5 transition ${reposted ? 'text-emerald-400 font-bold' : 'text-zinc-400 hover:text-emerald-400'}`} onClick={toggleRepost}>
             <Repeat size={18} />
+            <span className="text-xs">{repostsCount}</span>
           </button>
 
           {/* 4. المشاركة */}
@@ -1044,6 +1181,17 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
           <button type="button" className={`post-action-btn flex items-center gap-1.5 transition ${bookmarked ? 'saved text-amber-400' : 'text-zinc-400 hover:text-amber-400'}`} onClick={toggleBookmark}>
             <Bookmark size={18} fill={bookmarked ? 'currentColor' : 'none'} />
           </button>
+
+          {post.user_id !== currentUserId && (
+            <>
+              <button type="button" className={`post-action-btn flex items-center gap-1 text-xs transition ${feedback === 'interested' ? 'text-cyan-400' : 'text-zinc-400 hover:text-cyan-400'}`} onClick={() => void saveFeedback('interested')} aria-pressed={feedback === 'interested'}>
+                <ThumbsUp size={17} /> مهتم
+              </button>
+              <button type="button" className={`post-action-btn flex items-center gap-1 text-xs transition ${feedback === 'not_interested' ? 'text-zinc-200' : 'text-zinc-400 hover:text-white'}`} onClick={() => void saveFeedback('not_interested')} aria-pressed={feedback === 'not_interested'}>
+                <EyeOff size={17} /> غير مهتم
+              </button>
+            </>
+          )}
         </div>
 
         {comments && (
@@ -1061,12 +1209,66 @@ function PostCard({ post, currentUserId, onRefresh }: { post: Post; currentUserI
           </div>
         )}
       </footer>
+
+      {showEditModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-labelledby={`edit-post-${post.id}`}>
+          <form onSubmit={saveEdit} className="w-full max-w-lg space-y-4 rounded-xl border border-zinc-700 bg-zinc-950 p-5 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h2 id={`edit-post-${post.id}`} className="text-base font-bold text-white">تعديل المنشور</h2>
+              <button type="button" onClick={() => setShowEditModal(false)} className="p-1 text-zinc-400 hover:text-white" aria-label="إغلاق"><X size={18} /></button>
+            </div>
+            <textarea value={editContent} onChange={event => setEditContent(event.target.value)} maxLength={2000} rows={5} className="w-full resize-y rounded-lg border border-zinc-700 bg-black p-3 text-sm text-white outline-none focus:border-pink-500" placeholder="اكتب نص المنشور..." />
+            {post.type !== 'text' && (
+              <label className="block text-sm text-zinc-300">
+                استبدال {post.type === 'photo' ? 'الصورة' : 'الفيديو'} بملف من النوع نفسه
+                <input className="mt-2 block w-full text-xs text-zinc-400" type="file" accept={post.type === 'photo' ? 'image/*' : 'video/*'} onChange={event => setReplacementFile(event.target.files?.[0] || null)} />
+              </label>
+            )}
+            <div className="flex justify-end gap-2">
+              <button type="button" className="button-secondary text-xs" onClick={() => setShowEditModal(false)}>إلغاء</button>
+              <button type="submit" className="button-primary px-4 text-xs" disabled={busy}>{busy ? 'جارٍ الحفظ...' : 'حفظ التعديلات'}</button>
+            </div>
+          </form>
+        </div>
+      )}
     </article>
   );
 }
 
 // --- Hook الجلب الموحد ---
-function usePosts(query: 'feed' | 'reel' | 'profile', targetUserId?: string) {
+async function hydratePostInteractions(posts: Post[], currentUserId: string): Promise<Post[]> {
+  if (!supabaseConfigured || posts.length === 0) return posts;
+
+  const { data, error } = await supabase.rpc('get_post_interactions', { p_post_ids: posts.map(post => post.id) });
+  if (error) return posts;
+  const interactionRows = (data || []) as Array<{
+    post_id: string;
+    likes_count: number;
+    comments_count: number;
+    reposts_count: number;
+    liked_by_me: boolean;
+    reposted_by_me: boolean;
+    saved_by_me: boolean;
+    feedback_by_me: string | null;
+  }>;
+  const interactionByPost = new Map(interactionRows.map(row => [row.post_id, row]));
+
+  return posts.map(post => {
+    const interaction = interactionByPost.get(post.id);
+    return {
+      ...post,
+      likes_count: Number(interaction?.likes_count || 0),
+      comments_count: Number(interaction?.comments_count || 0),
+      reposts_count: Number(interaction?.reposts_count || 0),
+      liked_by_me: Boolean(interaction?.liked_by_me),
+      reposted_by_me: Boolean(interaction?.reposted_by_me),
+      saved_by_me: Boolean(interaction?.saved_by_me),
+      feedback_by_me: (interaction?.feedback_by_me as Post['feedback_by_me']) || null,
+    };
+  });
+}
+
+function usePosts(query: 'feed' | 'reel' | 'profile', targetUserId?: string, currentUserId = '') {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -1095,7 +1297,7 @@ function usePosts(query: 'feed' | 'reel' | 'profile', targetUserId?: string) {
             likes: [],
             comments: []
           }));
-          setPosts(formatted as unknown as Post[]);
+          setPosts(await hydratePostInteractions(formatted as unknown as Post[], currentUserId));
         } else {
           setPosts([]);
         }
@@ -1122,7 +1324,7 @@ function usePosts(query: 'feed' | 'reel' | 'profile', targetUserId?: string) {
             comments: []
           }));
 
-          setPosts(formattedPosts as unknown as Post[]);
+          setPosts(await hydratePostInteractions(formattedPosts as unknown as Post[], currentUserId));
         } else {
           setPosts([]);
         }
@@ -1147,7 +1349,7 @@ function usePosts(query: 'feed' | 'reel' | 'profile', targetUserId?: string) {
             likes: [],
             comments: []
           }));
-          setPosts(formatted as unknown as Post[]);
+          setPosts(await hydratePostInteractions(formatted as unknown as Post[], currentUserId));
         } else {
           setPosts([]);
         }
@@ -1157,7 +1359,7 @@ function usePosts(query: 'feed' | 'reel' | 'profile', targetUserId?: string) {
     } finally {
       setLoading(false);
     }
-  }, [query, targetUserId]);
+  }, [query, targetUserId, currentUserId]);
 
   useEffect(() => {
     void refresh();
@@ -1171,7 +1373,7 @@ function usePosts(query: 'feed' | 'reel' | 'profile', targetUserId?: string) {
 
 // --- الصفحة الرئيسية ---
 function FeedPage({ userId, profile }: { userId: string; profile: Profile | null }) {
-  const { posts, loading, refresh } = usePosts('feed');
+  const { posts, loading, refresh } = usePosts('feed', undefined, userId);
 
   return (
     <section className="new-view w-full max-w-lg mx-auto">
@@ -1190,6 +1392,53 @@ function FeedPage({ userId, profile }: { userId: string; profile: Profile | null
       )}
 
       {!loading && posts.length > 0 && <div className="posts-list space-y-3">{posts.map(post => <PostCard key={post.id} post={post} currentUserId={userId} onRefresh={() => void refresh()} />)}</div>}
+    </section>
+  );
+}
+
+function PostDetailPage({ postId, currentUserId }: { postId: string; currentUserId: string }) {
+  const [post, setPost] = useState<Post | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    if (!supabaseConfigured) {
+      setPost(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.from('posts')
+        .select('id, user_id, content, media_url, media_urls, type, created_at')
+        .eq('id', postId)
+        .maybeSingle();
+      if (error || !data) {
+        setPost(null);
+        return;
+      }
+      const { data: author } = await supabase.from('profiles')
+        .select('id, username, full_name, avatar_url')
+        .eq('id', data.user_id)
+        .maybeSingle();
+      const hydrated = await hydratePostInteractions([{
+        ...data,
+        author: author || { id: data.user_id, username: 'user', full_name: 'مستخدم آني' },
+      } as unknown as Post], currentUserId);
+      setPost(hydrated[0] || null);
+    } catch {
+      setPost(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [postId, currentUserId]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  return (
+    <section className="new-view mx-auto w-full max-w-lg">
+      {loading && <p className="py-8 text-center text-sm text-zinc-400">جارٍ تحميل المنشور...</p>}
+      {!loading && !post && <p className="py-8 text-center text-sm text-zinc-400">هذا المنشور غير متاح.</p>}
+      {post && <PostCard post={post} currentUserId={currentUserId} onRefresh={() => void refresh()} />}
     </section>
   );
 }
@@ -1421,7 +1670,7 @@ function ProfilePage({ targetUserId, currentUserId, profile, onProfileUpdate }: 
   const [postCount, setPostCount] = useState(0);
   const [isFollowing, setIsFollowing] = useState(false);
 
-  const { posts, loading, refresh } = usePosts('profile', activeUserId);
+  const { posts, loading, refresh } = usePosts('profile', activeUserId, currentUserId);
 
   useEffect(() => {
     if (!supabaseConfigured || !activeUserId) return;
@@ -1698,7 +1947,7 @@ function ReelSlide({ post, currentUserId }: { post: Post; currentUserId: string 
 
 // --- صفحة Reels ---
 function ReelsPage({ userId }: { userId: string }) {
-  const { posts, loading } = usePosts('reel');
+  const { posts, loading } = usePosts('reel', undefined, userId);
 
   return (
     <div className="reels-container">
@@ -2219,6 +2468,7 @@ function App() {
           <Shell userId={user.id} profile={profile} onSignOut={() => void signOut()}>
             <Switch>
               <Route path="/feed"><FeedPage userId={user.id} profile={profile} /></Route>
+              <Route path="/post/:postId">{params => <PostDetailPage postId={params.postId} currentUserId={user.id} />}</Route>
               <Route path="/"><FeedPage userId={user.id} profile={profile} /></Route>
               <Route path="/reels"><ReelsPage userId={user.id} /></Route>
               <Route path="/search"><SearchPage userId={user.id} /></Route>
