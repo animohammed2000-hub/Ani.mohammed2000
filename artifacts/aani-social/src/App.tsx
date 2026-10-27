@@ -1160,6 +1160,7 @@ function PostCard({
   const liked = interactions.liked;
 
   const isOwner = post.user_id === currentUserId;
+  const isMediaPost = post.type === 'photo' || post.type === 'reel';
 
   // --- post action menu (Edit / Delete / Report / Copy link) ---
   const [showMenu, setShowMenu] = useState(false);
