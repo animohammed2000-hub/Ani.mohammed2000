@@ -32,7 +32,6 @@ import {
   MIGRATION_HINT,
   hiddenPostIds,
   hydrateFeedback,
-  isSchemaGap,
   uploadPostAudio,
   usePostControls,
 } from '@/lib/postControls';
