@@ -1257,6 +1257,27 @@ function PostCard({
     }
   };
 
+  const handleSaveAudio = async () => {
+    if (savingAudio) return;
+    setSavingAudio(true);
+    try {
+      if (!audioFile) {
+        await controls.changeAudio(null);
+        setShowAudio(false);
+        return;
+      }
+      const audio = await uploadPostAudio(audioFile, currentUserId, post.id);
+      await controls.changeAudio(audio);
+      setShowAudio(false);
+      setAudioFile(null);
+    } catch (reason) {
+      if (reason instanceof Error) toast.error(reason.message);
+      else toast.error('تعذر تحديث المقطع الصوتي');
+    } finally {
+      setSavingAudio(false);
+    }
+  };
+
   const handleCopyLink = async () => {
     setShowMenu(false);
     const url = `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/post/${post.id}`;
