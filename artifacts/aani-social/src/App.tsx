@@ -79,7 +79,8 @@ export default function App() {
   const [posts, setPosts] = useState<Post[]>([
     {
       id: 'post-1',
-      content: 'مرحباً بكم في شبكة Ani Social! يسعدنا مشاركة اللحظات والتحديثات الجديدة معكم يومياً. 🚀✨',
+      content:
+        'مرحباً بكم في شبكة Ani Social! يسعدنا مشاركة اللحظات والتحديثات الجديدة معكم يومياً. 🚀✨',
       created_at: new Date().toISOString(),
       comments_count: 18,
       likes_count: 142,
@@ -93,7 +94,8 @@ export default function App() {
     },
     {
       id: 'post-2',
-      content: 'تحديث الواجهة أصبح سريعاً ومثمراً للغاية، تم تفنيش نموذج التعليق المباشر وعرض شريط التعليقات المنسدل.',
+      content:
+        'تحديث الواجهة أصبح سريعاً ومثمراً للغاية، تم تفنيش نموذج التعليق المباشر وعرض شريط التعليقات المنسدل.',
       created_at: new Date(Date.now() - 7200000).toISOString(),
       comments_count: 6,
       likes_count: 54,
@@ -168,7 +170,9 @@ export default function App() {
                   </div>
                 )}
               </div>
-              <span className="text-[11px] text-zinc-300 max-w-[64px] truncate">{story.user_name}</span>
+              <span className="text-[11px] text-zinc-300 max-w-[64px] truncate">
+                {story.user_name}
+              </span>
             </button>
           ))}
         </div>
@@ -189,14 +193,18 @@ export default function App() {
                     className="w-10 h-10 rounded-full object-cover"
                   />
                   <div>
-                    <h4 className="font-semibold text-sm text-zinc-100">{post.author?.full_name}</h4>
+                    <h4 className="font-semibold text-sm text-zinc-100">
+                      {post.author?.full_name}
+                    </h4>
                     <p className="text-xs text-zinc-400">@{post.author?.username}</p>
                   </div>
                 </div>
               </div>
 
               {post.content && (
-                <p className="px-4 pb-3 text-sm leading-relaxed text-zinc-200">{post.content}</p>
+                <p className="px-4 pb-3 text-sm leading-relaxed text-zinc-200">
+                  {post.content}
+                </p>
               )}
 
               {post.media_url && (
@@ -245,7 +253,9 @@ export default function App() {
           ))}
 
         {activeTab !== 'home' && (
-          <div className="py-20 text-center text-zinc-500 text-sm">جاري التبديل بين الشاشات...</div>
+          <div className="py-20 text-center text-zinc-500 text-sm">
+            جاري التبديل بين الشاشات...
+          </div>
         )}
       </main>
 
@@ -328,7 +338,10 @@ export default function App() {
       )}
 
       {isAiModalOpen && (
-        <AIAssistantModal isOpen={isAiModalOpen} onClose={() => setIsAiModalOpen(false)} />
+        <AIAssistantModal
+          isOpen={isAiModalOpen}
+          onClose={() => setIsAiModalOpen(false)}
+        />
       )}
     </div>
   );
