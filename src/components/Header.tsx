@@ -54,9 +54,9 @@ export const Header: React.FC<HeaderProps> = ({ currentUserId }) => {
           filter: `user_id=eq.${currentUserId}`,
         },
         (payload) => {
-          const newNotification = payload.new as Notification;
+          const nextNotification = payload.new as Notification;
 
-          setNotifications((prev) => [newNotification, ...prev]);
+          setNotifications((prev) => [nextNotification, ...prev]);
           setUnreadCount((prev) => prev + 1);
         }
       )

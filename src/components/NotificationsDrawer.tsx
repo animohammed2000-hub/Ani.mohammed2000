@@ -1,65 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Notification } from '../types/notification';
-import { supabase } from '../lib/supabase'; // تنبيه: تأكد من مطابق مسار استيراد ملف supabase لديك
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
   notifications: Notification[];
-  onMarkAsRead: (id: string) => void;
 }
 
 export const NotificationsDrawer: React.FC<Props> = ({
   isOpen,
   onClose,
-  notifications: initialNotifications,
-  onMarkAsRead,
+  notifications,
 }) => {
-  const [notifications, setNotifications] = useState<Notification[]>(initialNotifications);
-
-  // مزامنة الإشعارات القادمة عبر الـ Props عند التحديث
-  useEffect(() => {
-    setNotifications(initialNotifications);
-  }, [initialNotifications]);
-
-  // تفعيل الاستماع اللحظي (Realtime Subscription)
-  useEffect(() => {
-    const channel = supabase
-      .channel('realtime_notifications_drawer')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'notifications',
-        },
-        async (payload) => {
-          const newNotification = payload.new as Notification;
-
-          // جلب تفاصيل التفاعل والمستخدم (Actor) للإشعار الجديد
-          if (newNotification.actor_id) {
-            const { data: actor } = await supabase
-              .from('profiles')
-              .select('full_name, avatar_url')
-              .eq('id', newNotification.actor_id)
-              .single();
-
-            if (actor) {
-              newNotification.actor = actor;
-            }
-          }
-
-          // إضافة الإشعار الجديد في أعلى القائمة فوراً
-          setNotifications((prev) => [newNotification, ...prev]);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
   if (!isOpen) return null;
 
   return (
@@ -76,8 +28,7 @@ export const NotificationsDrawer: React.FC<Props> = ({
             notifications.map((n) => (
               <div
                 key={n.id}
-                onClick={() => onMarkAsRead(n.id)}
-                className={`p-3 rounded-lg border dark:border-gray-800 cursor-pointer transition ${
+                className={`p-3 rounded-lg border dark:border-gray-800 transition ${
                   n.read ? 'bg-transparent' : 'bg-blue-50 dark:bg-blue-950/30'
                 }`}
               >
