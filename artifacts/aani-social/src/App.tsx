@@ -1,5 +1,16 @@
 import React, { useState } from 'react';
-import { Heart, MessageCircle, MessageSquare } from 'lucide-react';
+import {
+  Bell,
+  Compass,
+  Heart,
+  Home,
+  MessageSquare,
+  Plus,
+  Search,
+  Settings,
+  Sparkles,
+  User,
+} from 'lucide-react';
 
 import CommentsDrawer from './components/CommentsDrawer';
 
@@ -51,17 +62,34 @@ function PostCard({
   };
 
   return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4 text-white shadow-sm">
-      <div className="flex items-center justify-between">
-        <div className="font-semibold">{post.author?.full_name || 'مستخدم'}</div>
-        <div className="text-xs text-zinc-400">
-          {post.created_at ? new Date(post.created_at).toLocaleDateString() : ''}
+    <article className="rounded-3xl border border-zinc-800 bg-zinc-900/80 p-4 shadow-[0_12px_38px_rgba(0,0,0,0.28)] backdrop-blur-sm">
+      <header className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-violet-600 text-sm font-bold text-white">
+            {post.author?.full_name?.[0] || 'م'}
+          </div>
+          <div>
+            <div className="text-sm font-bold text-white">{post.author?.full_name || 'مستخدم'}</div>
+            <div className="text-[11px] text-zinc-400" dir="ltr">
+              @{post.author?.username || 'user'}
+            </div>
+          </div>
         </div>
+
+        <div className="text-[11px] text-zinc-400">
+          {post.created_at ? new Date(post.created_at).toLocaleDateString() : 'اليوم'}
+        </div>
+      </header>
+
+      {post.content && (
+        <p className="mb-4 text-sm leading-7 text-zinc-200">{post.content}</p>
+      )}
+
+      <div className="mt-2 rounded-2xl border border-zinc-800 bg-zinc-950/70 p-3">
+        <div className="mb-3 h-48 rounded-2xl bg-gradient-to-br from-zinc-800 via-zinc-700 to-zinc-900" />
       </div>
 
-      {post.content && <p className="mt-3 text-sm leading-6 text-zinc-200">{post.content}</p>}
-
-      <div className="mt-4 flex items-center gap-3 text-zinc-300">
+      <div className="mt-4 flex items-center justify-between text-zinc-300">
         <button
           type="button"
           onClick={toggleLike}
@@ -87,7 +115,7 @@ function PostCard({
           {post.comments_count ?? 0}
         </button>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -112,19 +140,113 @@ export default function App() {
       likes_count: 21,
       author: { full_name: 'سارة', username: 'sara' },
     },
+    {
+      id: 'post-3',
+      content: 'الواجهة الآن قريبة من التطبيق الكامل مع شريط تنقل علوي وسفلي، مع عمل شريط التعليقات كـ bottom sheet.',
+      created_at: new Date(Date.now() - 7200000).toISOString(),
+      comments_count: 7,
+      likes_count: 53,
+      author: { full_name: 'ليلى', username: 'leila' },
+    },
   ];
 
   return (
-    <main className="min-h-screen bg-zinc-950 p-4 text-white dir-rtl">
-      <div className="mx-auto max-w-3xl space-y-4">
-        {posts.map((post) => (
-          <PostCard
-            key={post.id}
-            post={post}
-            currentUserId={currentUserId}
-            onOpenComments={(postId) => setSelectedPostForComments(postId)}
-          />
-        ))}
+    <div className="min-h-screen bg-[#070b12] text-white" dir="rtl">
+      <div className="mx-auto flex min-h-screen max-w-6xl flex-col bg-zinc-950/90 shadow-[0_0_40px_rgba(0,0,0,0.25)]">
+        <header className="sticky top-0 z-30 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-xl">
+          <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
+            <div className="flex items-center gap-3">
+              <button className="rounded-full bg-zinc-800 p-2 text-zinc-200 hover:bg-zinc-700">
+                <Bell size={18} />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 text-lg font-bold text-white">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-pink-500 to-violet-600">
+                <Sparkles size={16} />
+              </div>
+              آني
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button className="rounded-full bg-zinc-800 p-2 text-zinc-200 hover:bg-zinc-700">
+                <Settings size={18} />
+              </button>
+              <button className="rounded-full bg-pink-600 p-2 text-white shadow-lg shadow-pink-600/30 hover:bg-pink-500">
+                <Plus size={18} />
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col lg:flex-row">
+          <aside className="hidden w-72 border-r border-zinc-800 bg-zinc-950/80 p-5 lg:block">
+            <div className="mb-8 flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-pink-500 to-violet-600 text-lg font-bold text-white">
+                آ
+              </div>
+              <div>
+                <div className="font-bold text-white">آني</div>
+                <div className="text-xs text-zinc-400">منشورات عربية</div>
+              </div>
+            </div>
+
+            <nav className="space-y-2">
+              {[
+                ['الرئيسية', Home],
+                ['استكشاف', Compass],
+                ['بحث', Search],
+                ['ملفي', User],
+              ].map(([label, Icon]) => (
+                <button
+                  key={label}
+                  className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-right text-sm text-zinc-300 transition hover:bg-zinc-800 hover:text-white"
+                >
+                  <Icon size={18} />
+                  <span>{label}</span>
+                </button>
+              ))}
+            </nav>
+          </aside>
+
+          <main className="flex-1 p-4 sm:p-6">
+            <div className="mx-auto max-w-2xl space-y-4">
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-violet-600 text-sm font-bold text-white">
+                    م
+                  </div>
+                  <div className="flex-1 rounded-full border border-zinc-700 bg-zinc-950 px-4 py-2 text-sm text-zinc-500">
+                    ماذا يحدث اليوم؟
+                  </div>
+                </div>
+              </div>
+
+              {posts.map((post) => (
+                <PostCard
+                  key={post.id}
+                  post={post}
+                  currentUserId={currentUserId}
+                  onOpenComments={(postId) => setSelectedPostForComments(postId)}
+                />
+              ))}
+            </div>
+          </main>
+        </div>
+
+        <nav className="sticky bottom-0 z-30 border-t border-zinc-800 bg-zinc-950/90 backdrop-blur-xl lg:hidden">
+          <div className="mx-auto grid max-w-lg grid-cols-4 gap-2 px-3 py-2">
+            {[Home, Search, MessageSquare, User].map((Icon, idx) => (
+              <button
+                key={idx}
+                className="flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+              >
+                <Icon size={18} />
+                <span className="text-[10px]">{['الرئيسية', 'بحث', 'رسائل', 'ملفي'][idx]}</span>
+              </button>
+            ))}
+          </div>
+        </nav>
       </div>
 
       {selectedPostForComments && (
@@ -135,6 +257,6 @@ export default function App() {
           onClose={() => setSelectedPostForComments(null)}
         />
       )}
-    </main>
+    </div>
   );
 }
