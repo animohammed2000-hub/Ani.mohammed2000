@@ -215,7 +215,7 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/50 backdrop-blur-sm" dir="rtl">
+    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 backdrop-blur-sm" dir="rtl">
       <div className="absolute inset-0" onClick={onClose} />
 
       <div className="relative z-10 flex h-[82vh] w-full max-w-xl flex-col rounded-t-3xl border-t border-zinc-800 bg-zinc-950 text-white shadow-2xl">
