@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Heart, MessageCircle, Send } from 'lucide-react';
+import { Heart, MessageCircle } from 'lucide-react';
 
 import type { Post } from '../lib/types';
 import { supabase, supabaseConfigured } from '../lib/supabase';
@@ -8,15 +8,14 @@ export interface PostCardProps {
   post: Post;
   currentUserId: string;
   onRefresh: () => void;
+  onOpenComments?: (postId: string) => void;
 }
 
-export default function PostCard({ post, currentUserId, onRefresh }: PostCardProps) {
-  const [commentText, setCommentText] = useState('');
+export default function PostCard({ post, currentUserId, onRefresh, onOpenComments }: PostCardProps) {
   const [liked, setLiked] = useState(post.liked_by_me ?? (post.likes || []).some((like) => like.user_id === currentUserId));
   const [likesCount, setLikesCount] = useState(post.likes_count ?? post.likes?.length ?? 0);
   const [isAnimating, setIsAnimating] = useState(false);
   const [isLikePending, setIsLikePending] = useState(false);
-  const [isReplyPending, setIsReplyPending] = useState(false);
 
   const toggleLike = async () => {
     if (isLikePending) return;
@@ -62,28 +61,9 @@ export default function PostCard({ post, currentUserId, onRefresh }: PostCardPro
     }
   };
 
-  const submitComment = async () => {
-    if (isReplyPending) return;
-    if (!commentText.trim()) return;
-
-    setIsReplyPending(true);
-
-    try {
-      const payload = {
-        post_id: post.id,
-        user_id: currentUserId,
-        content: commentText.trim(),
-      };
-
-      const { error } = await supabase.from('comments').insert(payload);
-      if (error) throw error;
-
-      setCommentText('');
-      await onRefresh();
-    } catch (error) {
-      console.error('Failed to submit comment', error);
-    } finally {
-      setIsReplyPending(false);
+  const handleOpenComments = () => {
+    if (onOpenComments) {
+      onOpenComments(post.id);
     }
   };
 
@@ -109,28 +89,13 @@ export default function PostCard({ post, currentUserId, onRefresh }: PostCardPro
           {likesCount}
         </button>
 
-        <div className="inline-flex items-center gap-2 rounded-full bg-zinc-800 px-2 py-1 text-xs text-zinc-300">
-          <MessageCircle size={15} />
-          {post.comments_count ?? 0}
-        </div>
-      </div>
-
-      <div className="mt-4 flex items-center gap-2">
-        <input
-          value={commentText}
-          onChange={(event) => setCommentText(event.target.value)}
-          placeholder="Write a comment..."
-          className="flex-1 rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white outline-none focus:border-pink-500"
-        />
-
         <button
           type="button"
-          onClick={submitComment}
-          disabled={isReplyPending || !commentText.trim()}
-          className="inline-flex items-center gap-2 rounded-xl bg-pink-500 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={handleOpenComments}
+          className="inline-flex items-center gap-2 rounded-full bg-zinc-800 px-2 py-1 text-xs text-zinc-300 transition hover:bg-zinc-700"
         >
-          <Send size={15} />
-          {isReplyPending ? 'Sending...' : 'Post'}
+          <MessageCircle size={15} />
+          {post.comments_count ?? 0}
         </button>
       </div>
     </div>
