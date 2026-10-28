@@ -215,10 +215,10 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/60 backdrop-blur-xs transition-opacity dir-rtl">
+    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/50 backdrop-blur-sm" dir="rtl">
       <div className="absolute inset-0" onClick={onClose} />
 
-      <div className="relative z-10 flex h-[82vh] w-full flex-col rounded-t-3xl border-t border-zinc-800 bg-zinc-950 text-white shadow-2xl">
+      <div className="relative z-10 flex h-[82vh] w-full max-w-xl flex-col rounded-t-3xl border-t border-zinc-800 bg-zinc-950 text-white shadow-2xl">
         <div className="flex shrink-0 items-center justify-between border-b border-zinc-800/80 px-4 py-3">
           <button
             type="button"
@@ -264,7 +264,9 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
         <div className="shrink-0 border-t border-zinc-800/80 bg-zinc-950 p-3 space-y-2">
           {replyingTo && (
             <div className="flex items-center justify-between rounded-xl bg-zinc-900 px-3 py-1.5 text-xs text-zinc-300 border border-zinc-800">
-              <span>الرد على <strong className="text-pink-400">@{replyingTo.profiles?.username || 'مستخدم'}</strong></span>
+              <span>
+                الرد على <strong className="text-pink-400">@{replyingTo.profiles?.username || 'مستخدم'}</strong>
+              </span>
               <button
                 type="button"
                 onClick={() => setReplyingTo(null)}
