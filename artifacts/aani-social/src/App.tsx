@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Bell,
   Compass,
@@ -119,36 +119,156 @@ function PostCard({
   );
 }
 
+function FeedScreen({
+  posts,
+  onOpenComments,
+}: {
+  posts: Post[];
+  onOpenComments: (postId: string) => void;
+}) {
+  return (
+    <main className="flex-1 p-4 sm:p-6">
+      <div className="mx-auto max-w-2xl space-y-4">
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-violet-600 text-sm font-bold text-white">
+              م
+            </div>
+            <div className="flex-1 rounded-full border border-zinc-700 bg-zinc-950 px-4 py-2 text-sm text-zinc-500">
+              ماذا يحدث اليوم؟
+            </div>
+          </div>
+        </div>
+
+        {posts.map((post) => (
+          <PostCard
+            key={post.id}
+            post={post}
+            currentUserId="demo-user-id"
+            onOpenComments={onOpenComments}
+          />
+        ))}
+      </div>
+    </main>
+  );
+}
+
+function SearchScreen() {
+  return (
+    <main className="flex-1 p-6">
+      <div className="mx-auto max-w-2xl rounded-3xl border border-zinc-800 bg-zinc-900/80 p-4">
+        <div className="mb-4 flex items-center gap-3 rounded-2xl border border-zinc-700 bg-zinc-950 px-3 py-2">
+          <Search size={18} className="text-pink-500" />
+          <input
+            className="w-full bg-transparent text-sm text-white outline-none placeholder:text-zinc-500"
+            placeholder="ابحث عن الناس أو المنشورات..."
+            defaultValue=""
+          />
+        </div>
+        <div className="space-y-3 text-zinc-300">
+          <div className="rounded-2xl bg-zinc-800 p-3 text-sm">نتائج البحث ستظهر هنا</div>
+          <div className="rounded-2xl bg-zinc-800 p-3 text-sm">مستخدمون بارزون</div>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+function MessagesScreen() {
+  return (
+    <main className="flex-1 p-6">
+      <div className="mx-auto max-w-2xl space-y-3">
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4 text-sm text-zinc-300">
+          الرسائل المباشرة ستظهر هنا
+        </div>
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4 text-sm text-zinc-400">
+          لا توجد محادثات جديدة
+        </div>
+      </div>
+    </main>
+  );
+}
+
+function ProfileScreen() {
+  return (
+    <main className="flex-1 p-6">
+      <div className="mx-auto max-w-2xl rounded-3xl border border-zinc-800 bg-zinc-900/80 p-5">
+        <div className="mb-4 flex items-center gap-4">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-violet-600 text-lg font-bold text-white">
+            م
+          </div>
+          <div>
+            <div className="text-lg font-bold text-white">ملفي</div>
+            <div className="text-sm text-zinc-400" dir="ltr">@mohammed</div>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-3 text-center">
+          <div className="rounded-2xl bg-zinc-800 p-3">
+            <div className="text-xl font-bold text-white">142</div>
+            <div className="text-xs text-zinc-400">منشورات</div>
+          </div>
+          <div className="rounded-2xl bg-zinc-800 p-3">
+            <div className="text-xl font-bold text-white">4.8k</div>
+            <div className="text-xs text-zinc-400">متابعين</div>
+          </div>
+          <div className="rounded-2xl bg-zinc-800 p-3">
+            <div className="text-xl font-bold text-white">285</div>
+            <div className="text-xs text-zinc-400">يتابع</div>
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}
+
 export default function App() {
   const currentUserId = 'demo-user-id';
+  const [activeView, setActiveView] = useState<'feed' | 'search' | 'messages' | 'profile'>('feed');
   const [selectedPostForComments, setSelectedPostForComments] = useState<string | null>(null);
 
-  const posts: Post[] = [
-    {
-      id: 'post-1',
-      content: 'أول منشور في الخلاصة. هذا هو الإصدار المنقح الذي يفتح الشريط السفلي عند الضغط على التعليقات.',
-      created_at: new Date().toISOString(),
-      comments_count: 12,
-      likes_count: 89,
-      author: { full_name: 'أماني', username: 'amani' },
-    },
-    {
-      id: 'post-2',
-      content: 'تمت إزالة نموذج التعليق الداخلي وعرض شريط التعليقات العلوي في أسفل الشاشه.',
-      created_at: new Date(Date.now() - 3600000).toISOString(),
-      comments_count: 4,
-      likes_count: 21,
-      author: { full_name: 'سارة', username: 'sara' },
-    },
-    {
-      id: 'post-3',
-      content: 'الواجهة الآن قريبة من التطبيق الكامل مع شريط تنقل علوي وسفلي، مع عمل شريط التعليقات كـ bottom sheet.',
-      created_at: new Date(Date.now() - 7200000).toISOString(),
-      comments_count: 7,
-      likes_count: 53,
-      author: { full_name: 'ليلى', username: 'leila' },
-    },
-  ];
+  const posts: Post[] = useMemo(
+    () => [
+      {
+        id: 'post-1',
+        content: 'أول منشور في الخلاصة. هذا هو الإصدار المنقح الذي يفتح الشريط السفلي عند الضغط على التعليقات.',
+        created_at: new Date().toISOString(),
+        comments_count: 12,
+        likes_count: 89,
+        author: { full_name: 'أماني', username: 'amani' },
+      },
+      {
+        id: 'post-2',
+        content: 'تمت إزالة نموذج التعليق الداخلي وعرض شريط التعليقات العلوي في أسفل الشاشه.',
+        created_at: new Date(Date.now() - 3600000).toISOString(),
+        comments_count: 4,
+        likes_count: 21,
+        author: { full_name: 'سارة', username: 'sara' },
+      },
+      {
+        id: 'post-3',
+        content: 'الواجهة الآن قريبة من التطبيق الكامل مع شريط تنقل علوي وسفلي، مع عمل شريط التعليقات كـ bottom sheet.',
+        created_at: new Date(Date.now() - 7200000).toISOString(),
+        comments_count: 7,
+        likes_count: 53,
+        author: { full_name: 'ليلى', username: 'leila' },
+      },
+    ],
+    []
+  );
+
+  const renderView = () => {
+    switch (activeView) {
+      case 'search':
+        return <SearchScreen />;
+      case 'messages':
+        return <MessagesScreen />;
+      case 'profile':
+        return <ProfileScreen />;
+      case 'feed':
+      default:
+        return <FeedScreen posts={posts} onOpenComments={(postId) => setSelectedPostForComments(postId)} />;
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#070b12] text-white" dir="rtl">
@@ -200,6 +320,12 @@ export default function App() {
               ].map(([label, Icon]) => (
                 <button
                   key={label}
+                  onClick={() => {
+                    if (label === 'الرئيسية') setActiveView('feed');
+                    if (label === 'بحث') setActiveView('search');
+                    if (label === 'ملفي') setActiveView('profile');
+                    if (label === 'استكشاف') setActiveView('feed');
+                  }}
                   className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-right text-sm text-zinc-300 transition hover:bg-zinc-800 hover:text-white"
                 >
                   <Icon size={18} />
@@ -209,29 +335,7 @@ export default function App() {
             </nav>
           </aside>
 
-          <main className="flex-1 p-4 sm:p-6">
-            <div className="mx-auto max-w-2xl space-y-4">
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-3">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-violet-600 text-sm font-bold text-white">
-                    م
-                  </div>
-                  <div className="flex-1 rounded-full border border-zinc-700 bg-zinc-950 px-4 py-2 text-sm text-zinc-500">
-                    ماذا يحدث اليوم؟
-                  </div>
-                </div>
-              </div>
-
-              {posts.map((post) => (
-                <PostCard
-                  key={post.id}
-                  post={post}
-                  currentUserId={currentUserId}
-                  onOpenComments={(postId) => setSelectedPostForComments(postId)}
-                />
-              ))}
-            </div>
-          </main>
+          {renderView()}
         </div>
 
         <nav className="sticky bottom-0 z-30 border-t border-zinc-800 bg-zinc-950/90 backdrop-blur-xl lg:hidden">
@@ -239,6 +343,12 @@ export default function App() {
             {[Home, Search, MessageSquare, User].map((Icon, idx) => (
               <button
                 key={idx}
+                onClick={() => {
+                  if (idx === 0) setActiveView('feed');
+                  if (idx === 1) setActiveView('search');
+                  if (idx === 2) setActiveView('messages');
+                  if (idx === 3) setActiveView('profile');
+                }}
                 className="flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-zinc-400 hover:bg-zinc-800 hover:text-white"
               >
                 <Icon size={18} />
