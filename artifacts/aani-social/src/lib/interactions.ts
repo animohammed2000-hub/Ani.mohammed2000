@@ -1,17 +1,5 @@
 /**
- * Persistent interactions layer (likes, comments, reposts, shares, bookmarks).
- *
- * Design goals:
- *  - optimistic UI: the button reacts instantly, then the database confirms it
- *  - rollback on failure, so a failed write never leaves a fake "liked" state
- *  - one shared store per (user, post) so every rendered copy of a post shows
- *    exactly the same counters and flags (feed, profile, reel, saved page)
- *  - hydration from the database, so refresh / re-render / reopening the app
- *    restores the real state and the real counters
- *  - realtime updates so counters are the same for every user
- *  - graceful degradation: if an optional table has not been migrated yet the
- *    feature falls back to localStorage and tells the user, instead of
- *    pretending the interaction was saved
+ * Persistent interactions layer (likes, comments, reposts, shares, bookmarks, threaded comments).
  */
 
 import {
@@ -58,6 +46,24 @@ export type PostCommentRow = {
   author: CommentAuthor;
 };
 
+export interface CommentWithDetails {
+  id: string;
+  post_id: string;
+  user_id: string;
+  parent_id: string | null;
+  content: string;
+  image_url: string | null;
+  created_at: string;
+  profiles: {
+    full_name: string;
+    username: string;
+    avatar_url: string | null;
+  } | null;
+  likes_count?: number;
+  is_liked?: boolean;
+  replies?: CommentWithDetails[];
+}
+
 type RawRow = Record<string, any>;
 
 type LocalPostState = {
@@ -102,7 +108,6 @@ const cache = new Map<string, InteractionSnapshot>();
 const listeners = new Set<() => void>();
 const pendingWrites = new Map<string, number>();
 const directHydration = new Map<string, number>();
-/** A cached snapshot is considered fresh for this long. */
 const HYDRATION_TTL_MS = 20_000;
 let version = 0;
 
@@ -171,7 +176,6 @@ function patchCache(
   emit();
 }
 
-/** Snapshot seeded from the post row returned by the feed query. */
 export function snapshotFromPost(
   post: Post,
   userId: string,
@@ -206,14 +210,11 @@ function localNumber(
   server: number | undefined,
   fallback: number,
 ): number {
-  // Server counters win as soon as they exist; local numbers are only used
-  // while the app runs without a configured database.
   if (typeof server === "number" && Number.isFinite(server)) return server;
   if (typeof local === "number" && Number.isFinite(local)) return local;
   return fallback;
 }
 
-/** Read the current state of a post for a user (no React needed). */
 export function readInteractionState(
   post: Post,
   userId: string,
@@ -221,7 +222,6 @@ export function readInteractionState(
   return readCache(post.id, userId) ?? snapshotFromPost(post, userId);
 }
 
-/** Internal: read with a minimal post reference. */
 function stateOf(
   postId: string,
   userId: string,
@@ -241,12 +241,8 @@ function toNumber(value: unknown, fallback: number): number {
     : fallback;
 }
 
-function toBool(value: unknown, fallback: boolean): boolean {
-  return typeof value === "boolean" ? value : fallback;
-}
-
 /* ------------------------------------------------------------------ */
-/* Local fallback (used only when a table has not been migrated yet)    */
+/* Local fallback                                                      */
 /* ------------------------------------------------------------------ */
 
 const localFlagCache = new Map<string, LocalFlags>();
@@ -285,11 +281,9 @@ function writeLocalFlag(
   try {
     window.localStorage.setItem(localKey(userId), JSON.stringify(all));
   } catch {
-    /* storage can be unavailable in private mode - ignore */
+    /* ignore */
   }
 }
-
-/* --- local comments (only used until the database is configured) ---- */
 
 const LOCAL_COMMENTS_KEY = "aani:comments:v1";
 
@@ -313,7 +307,7 @@ function writeLocalComments(postId: string, comments: LocalComment[]): void {
     parsed[postId] = comments;
     window.localStorage.setItem(LOCAL_COMMENTS_KEY, JSON.stringify(parsed));
   } catch {
-    /* ignore quota / private mode errors */
+    /* ignore */
   }
 }
 
@@ -334,7 +328,7 @@ function isMissingRelation(error: unknown): boolean {
 }
 
 /* ------------------------------------------------------------------ */
-/* Hydration                                                           */
+/* Hydration & Decorate                                                */
 /* ------------------------------------------------------------------ */
 
 type Summary = {
@@ -380,11 +374,6 @@ function optionalBool(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
-/**
- * Tries the SQL helper first (single round trip, aggregates every row with a
- * SECURITY DEFINER function so global counters do not depend on per-table
- * select policies). Returns null when the helper is not deployed yet.
- */
 async function fetchSummaries(
   postIds: string[],
   userId: string,
@@ -402,7 +391,6 @@ async function fetchSummaries(
       if (summary.postId) map.set(summary.postId, summary);
     });
 
-    // Fill flags for rows the RPC did not return (should not happen).
     if (map.size < postIds.length) {
       const fallback = await fetchFallbackSummaries(postIds, userId);
       fallback.forEach((value, key) => {
@@ -415,12 +403,6 @@ async function fetchSummaries(
   }
 }
 
-/**
- * Fallback for projects where the migration has not been applied yet.
- * Likes/comments are readable by every signed-in user, so their counters stay
- * real. Reposts/bookmarks/shares only expose the current user's rows; their
- * counters then come from the denormalised columns when they exist.
- */
 async function fetchFallbackSummaries(
   postIds: string[],
   userId: string,
@@ -431,31 +413,11 @@ async function fetchFallbackSummaries(
   if (!supabaseConfigured || postIds.length === 0) return summaries;
 
   const [likes, comments, reposts, bookmarks, shares, rows] = await Promise.all([
-    supabase
-      .from("likes")
-      .select("post_id,user_id")
-      .in("post_id", postIds)
-      .limit(20000),
-    supabase
-      .from("comments")
-      .select("post_id")
-      .in("post_id", postIds)
-      .limit(20000),
-    supabase
-      .from("reposts")
-      .select("post_id,user_id")
-      .in("post_id", postIds)
-      .limit(20000),
-    supabase
-      .from("bookmarks")
-      .select("post_id,user_id")
-      .in("post_id", postIds)
-      .limit(20000),
-    supabase
-      .from("post_shares")
-      .select("post_id,user_id")
-      .in("post_id", postIds)
-      .limit(20000),
+    supabase.from("likes").select("post_id,user_id").in("post_id", postIds).limit(20000),
+    supabase.from("comments").select("post_id").in("post_id", postIds).limit(20000),
+    supabase.from("reposts").select("post_id,user_id").in("post_id", postIds).limit(20000),
+    supabase.from("bookmarks").select("post_id,user_id").in("post_id", postIds).limit(20000),
+    supabase.from("post_shares").select("post_id,user_id").in("post_id", postIds).limit(20000),
     supabase.from("posts").select("*").in("id", postIds),
   ]);
 
@@ -515,7 +477,6 @@ function countByPost(rows: unknown): Map<string, number> {
 
 function applySummary(summary: Summary, userId: string): void {
   if (!summary.postId) return;
-  // Never overwrite a snapshot while a write for it is still in flight.
   if (isPending(summary.postId, userId)) return;
 
   const local = readLocalFlags(userId)[summary.postId] ?? {};
@@ -533,7 +494,6 @@ function applySummary(summary: Summary, userId: string): void {
   });
 }
 
-/** Hydrate counters/flags for a set of posts from the database. */
 export async function hydratePosts(
   posts: Post[],
   userId: string,
@@ -550,7 +510,6 @@ export async function hydratePosts(
     });
 
   ids.forEach((id) => directHydration.set(keyOf(id, userId), Date.now()));
-
   const targets = ids.length > 0 ? ids : posts.map((post) => post.id);
 
   const summaries = await fetchSummaries(targets, userId);
@@ -563,7 +522,6 @@ export async function hydratePosts(
   fallback.forEach((summary) => applySummary(summary, userId));
 }
 
-/** Hydrate a single post by id (used by realtime and after mutations). */
 export async function hydratePostIds(
   postIds: string[],
   userId: string,
@@ -597,7 +555,6 @@ export async function hydratePostIds(
   if (posts.length > 0) await hydratePosts(posts, userId, options);
 }
 
-/** Fetch profiles + interaction summaries and return fully decorated posts. */
 export async function decoratePosts(
   rows: RawRow[],
   userId: string,
@@ -607,11 +564,9 @@ export async function decoratePosts(
   const authorIds = Array.from(
     new Set(rows.map((row) => String(row.user_id ?? "")).filter(Boolean)),
   );
-
   const reposterIds = Array.from(
     new Set(rows.map((row) => String(row.reposter_id ?? "")).filter(Boolean)),
   );
-
   const profileIds = Array.from(new Set([...authorIds, ...reposterIds]));
 
   let profiles: Profile[] = [];
@@ -641,18 +596,15 @@ export async function decoratePosts(
     repost_attribution: row.reposter_id
       ? (byId.get(String(row.reposter_id)) ?? null)
       : null,
-    // Optional columns - absent until migration 20261028000000 is applied.
     comments_disabled: row.comments_disabled === true,
     audio_url: (row.audio_url as string | null) ?? null,
     audio_title: (row.audio_title as string | null) ?? null,
   }));
 
   await hydratePosts(posts, userId);
-
   return posts.map((post) => decoratePost(post, userId));
 }
 
-/** Merge the shared store state into a post object. */
 export function decoratePost(post: Post, userId: string): Post {
   const state = readCache(post.id, userId) ?? snapshotFromPost(post, userId);
   return {
@@ -674,7 +626,7 @@ export function decoratePost(post: Post, userId: string): Post {
 async function notifyUser(
   recipientId: string,
   actorId: string,
-  type: "like" | "comment" | "repost" | "follow" | "share",
+  type: "like" | "comment" | "repost" | "follow" | "share" | "comment_like" | "reply",
   postId: string,
   content: string,
 ): Promise<void> {
@@ -688,7 +640,7 @@ async function notifyUser(
       content,
     });
   } catch {
-    /* notifications are best-effort */
+    /* ignore */
   }
 }
 
@@ -709,24 +661,12 @@ export async function toggleLike(post: Post, userId: string): Promise<void> {
 
   try {
     const { error } = liked
-      ? await supabase
-          .from("likes")
-          .insert({ post_id: post.id, user_id: userId })
-      : await supabase
-          .from("likes")
-          .delete()
-          .eq("post_id", post.id)
-          .eq("user_id", userId);
+      ? await supabase.from("likes").insert({ post_id: post.id, user_id: userId })
+      : await supabase.from("likes").delete().eq("post_id", post.id).eq("user_id", userId);
 
     if (error && error.code !== "23505") {
-      patchCache(post.id, userId, {
-        liked: before.liked,
-        likes: before.likes,
-      });
-      writeLocalFlag(userId, post.id, {
-        liked: before.liked,
-        likes: before.likes,
-      });
+      patchCache(post.id, userId, { liked: before.liked, likes: before.likes });
+      writeLocalFlag(userId, post.id, { liked: before.liked, likes: before.likes });
       toast.error("تعذر حفظ الإعجاب، تحقق من الاتصال وحاول مجدداً");
       return;
     }
@@ -746,10 +686,7 @@ export async function toggleLike(post: Post, userId: string): Promise<void> {
   await hydratePostIds([post.id], userId, { force: true });
 }
 
-export async function toggleBookmark(
-  post: Post,
-  userId: string,
-): Promise<void> {
+export async function toggleBookmark(post: Post, userId: string): Promise<void> {
   const before = readInteractionState(post, userId);
   const bookmarked = !before.bookmarked;
   markPending(post.id, userId, 1);
@@ -763,21 +700,13 @@ export async function toggleBookmark(
     }
 
     const { error } = bookmarked
-      ? await supabase
-          .from("bookmarks")
-          .insert({ post_id: post.id, user_id: userId })
-      : await supabase
-          .from("bookmarks")
-          .delete()
-          .eq("post_id", post.id)
-          .eq("user_id", userId);
+      ? await supabase.from("bookmarks").insert({ post_id: post.id, user_id: userId })
+      : await supabase.from("bookmarks").delete().eq("post_id", post.id).eq("user_id", userId);
 
     if (error && error.code !== "23505") {
       if (isMissingRelation(error)) {
         writeLocalFlag(userId, post.id, { bookmarked });
-        toast.warning(
-          "تم حفظ المنشور على هذا الجهاز. طبّق ترحيل قاعدة البيانات لحفظه في حسابك.",
-        );
+        toast.warning("تم حفظ المنشور على هذا الجهاز.");
         return;
       }
       patchCache(post.id, userId, { bookmarked: before.bookmarked });
@@ -812,27 +741,16 @@ export async function toggleRepost(post: Post, userId: string): Promise<void> {
     }
 
     const { error } = reposted
-      ? await supabase
-          .from("reposts")
-          .insert({ post_id: post.id, user_id: userId })
-      : await supabase
-          .from("reposts")
-          .delete()
-          .eq("post_id", post.id)
-          .eq("user_id", userId);
+      ? await supabase.from("reposts").insert({ post_id: post.id, user_id: userId })
+      : await supabase.from("reposts").delete().eq("post_id", post.id).eq("user_id", userId);
 
     if (error && error.code !== "23505") {
       if (isMissingRelation(error)) {
         writeLocalFlag(userId, post.id, { reposted });
-        toast.warning(
-          "تم تسجيل إعادة النشر على هذا الجهاز. طبّق ترحيل قاعدة البيانات لحفظها في حسابك.",
-        );
+        toast.warning("تم تسجيل إعادة النشر على هذا الجهاز.");
         return;
       }
-      patchCache(post.id, userId, {
-        reposted: before.reposted,
-        reposts: before.reposts,
-      });
+      patchCache(post.id, userId, { reposted: before.reposted, reposts: before.reposts });
       toast.error("تعذر إعادة النشر، حاول مرة أخرى");
       return;
     }
@@ -841,13 +759,7 @@ export async function toggleRepost(post: Post, userId: string): Promise<void> {
     writeLocalFlag(userId, post.id, { reposted });
     toast.success(reposted ? "تمت إعادة نشر المنشور" : "تمت إزالة إعادة النشر");
     if (reposted) {
-      void notifyUser(
-        post.user_id,
-        userId,
-        "repost",
-        post.id,
-        "أعاد نشر منشورك",
-      );
+      void notifyUser(post.user_id, userId, "repost", post.id, "أعاد نشر منشورك");
     }
   } finally {
     markPending(post.id, userId, -1);
@@ -868,9 +780,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
       await navigator.clipboard.writeText(text);
       return true;
     }
-  } catch {
-    /* fall through to the legacy path */
-  }
+  } catch {}
 
   try {
     const textarea = document.createElement("textarea");
@@ -892,20 +802,12 @@ export function postShareUrl(postId: string): string {
   return buildPostUrl(postId);
 }
 
-/** Short text used as the message body when sharing a post. */
 export function postShareText(post: Post): string {
   const excerpt = (post.content ?? "").trim().replace(/\s+/g, " ");
   if (!excerpt) return `منشور ${displayName(post.author)} على آني`;
   return excerpt.length > 140 ? `${excerpt.slice(0, 139)}…` : excerpt;
 }
 
-/**
- * Records that `userId` shared `post` — exactly once per user.
- *
- * Writes a row into `public.post_shares` (unique per post+user). The database
- * trigger bumps `posts.shares_count`, and the row is what makes the purple
- * "shared" state survive a refresh. Returns true when it was persisted.
- */
 export async function recordShare(post: Post, userId: string): Promise<boolean> {
   const before = readInteractionState(post, userId);
 
@@ -924,7 +826,6 @@ export async function recordShare(post: Post, userId: string): Promise<boolean> 
     const { error } = await supabase
       .from("post_shares")
       .insert({ post_id: post.id, user_id: userId });
-    // 23505 => already counted for this user, keep the flag.
     const persisted = !error || error.code === "23505" || isMissingRelation(error);
     if (persisted) {
       void hydratePostIds([post.id], userId, { force: true });
@@ -935,230 +836,6 @@ export async function recordShare(post: Post, userId: string): Promise<boolean> 
   } catch {
     patchCache(post.id, userId, { shares: before.shares });
     return false;
-  }
-}
-
-export type ShareFriendRelation = "friend" | "following" | "follower" | "suggested";
-
-export type ShareFriend = {
-  id: string;
-  name: string;
-  username: string;
-  avatar_url: string | null;
-  relation: ShareFriendRelation;
-};
-
-/**
- * People the current user can send a post to.
- *
- * Real relationships from `public.follows`: mutual follows are friends, then
- * people you follow, then people who follow you. If the user has no follow
- * relationships yet we list other members so the feature is still usable
- * (clearly labelled as "على آني" rather than pretending they are friends).
- */
-export async function loadShareFriends(userId: string): Promise<ShareFriend[]> {
-  if (!supabaseConfigured || !userId) return [];
-
-  const [followingRes, followersRes] = await Promise.all([
-    supabase.from("follows").select("following_id").eq("follower_id", userId),
-    supabase.from("follows").select("follower_id").eq("following_id", userId),
-  ]);
-
-  const following = new Set<string>(
-    ((followingRes.data ?? []) as RawRow[]).map((row) => String(row.following_id)),
-  );
-  const followers = new Set<string>(
-    ((followersRes.data ?? []) as RawRow[]).map((row) => String(row.follower_id)),
-  );
-
-  const related = new Set<string>([...following, ...followers]);
-  related.delete(userId);
-
-  const { data } = related.size
-    ? await supabase
-        .from("profiles")
-        .select("id,username,display_name,full_name,avatar_url")
-        .in("id", [...related])
-    : await supabase
-        .from("profiles")
-        .select("id,username,display_name,full_name,avatar_url")
-        .neq("id", userId)
-        .limit(20);
-
-  const profiles = (data ?? []) as RawRow[];
-
-  const rankOf = (id: string): number => {
-    const isFollowing = following.has(id);
-    const isFollower = followers.has(id);
-    if (isFollowing && isFollower) return 0;
-    if (isFollowing) return 1;
-    if (isFollower) return 2;
-    return 3;
-  };
-
-  return profiles
-    .filter((row) => String(row.id) !== userId)
-    .map((row) => {
-      const id = String(row.id);
-      const relation: ShareFriendRelation =
-        following.has(id) && followers.has(id)
-          ? "friend"
-          : following.has(id)
-            ? "following"
-            : followers.has(id)
-              ? "follower"
-              : "suggested";
-      return {
-        id,
-        name: displayName(row as Profile),
-        username: String(row.username ?? ""),
-        avatar_url: (row.avatar_url as string | null) ?? null,
-        relation,
-      };
-    })
-    .sort((a, b) => rankOf(a.id) - rankOf(b.id) || a.name.localeCompare(b.name));
-}
-
-/**
- * Sends a post to another user through the real messaging system
- * (`public.messages`), so it shows up in their inbox/conversation — not just a
- * locally copied link. Also counts as one share for the post.
- */
-export async function sendPostToFriend(
-  post: Post,
-  fromUserId: string,
-  friendId: string,
-  note = "",
-): Promise<{ ok: boolean; message: string }> {
-  if (!supabaseConfigured) {
-    return { ok: false, message: "لا يوجد اتصال بقاعدة البيانات." };
-  }
-  if (!fromUserId || !friendId) {
-    return { ok: false, message: "تعذر تحديد المرسل أو المستلم." };
-  }
-  if (fromUserId === friendId) {
-    return { ok: false, message: "لا يمكنك إرسال المنشور إلى نفسك." };
-  }
-
-  const body = [
-    note.trim() || "أرسل لك هذا المنشور من آني",
-    postShareText(post),
-    buildPostUrl(post.id),
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  const { error } = await supabase.from("messages").insert({
-    sender_id: fromUserId,
-    recipient_id: friendId,
-    content: body,
-  });
-
-  if (error) {
-    if (isMissingRelation(error)) {
-      return { ok: false, message: "جدول الرسائل غير مهيأ في قاعدة البيانات." };
-    }
-    if (error.code === "42501") {
-      return { ok: false, message: "لا تملك صلاحية إرسال رسالة لهذا المستخدم." };
-    }
-    return { ok: false, message: "تعذر إرسال المنشور، حاول مرة أخرى." };
-  }
-
-  await recordShare(post, fromUserId);
-  await notifyUser(friendId, fromUserId, "share", post.id, "أرسل لك منشوراً");
-
-  return { ok: true, message: "تم إرسال المنشور" };
-}
-
-export type ShareChannel =
-  | "whatsapp"
-  | "telegram"
-  | "x"
-  | "facebook"
-  | "email"
-  | "sms";
-
-/** Real deep-link/URL for each external share destination. */
-export function buildShareTargetUrl(channel: ShareChannel, post: Post): string {
-  const url = buildPostUrl(post.id);
-  const text = postShareText(post);
-  const encodedUrl = encodeURIComponent(url);
-  const encodedText = encodeURIComponent(text);
-
-  switch (channel) {
-    case "whatsapp":
-      return `https://wa.me/?text=${encodeURIComponent(`${text}\n${url}`)}`;
-    case "telegram":
-      return `https://t.me/share/url?url=${encodedUrl}&text=${encodedText}`;
-    case "x":
-      return `https://twitter.com/intent/tweet?url=${encodedUrl}&text=${encodedText}`;
-    case "facebook":
-      return `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`;
-    case "email":
-      return `mailto:?subject=${encodedText}&body=${encodeURIComponent(`${text}\n\n${url}`)}`;
-    case "sms":
-      return `sms:?&body=${encodeURIComponent(`${text} ${url}`)}`;
-    default:
-      return url;
-  }
-}
-
-/**
- * Opens the chosen app/website with the post, then records the share.
- * The window is opened synchronously so mobile browsers don't block it.
- */
-export function sharePostToApp(
-  channel: ShareChannel,
-  post: Post,
-): void {
-  if (typeof window === "undefined") return;
-  const target = buildShareTargetUrl(channel, post);
-  if (channel === "email" || channel === "sms") {
-    window.location.href = target;
-    return;
-  }
-  window.open(target, "_blank", "noopener,noreferrer");
-}
-
-/** Copies the post link and records the share. */
-export async function copyPostLink(
-  post: Post,
-  userId: string,
-  options: { silent?: boolean } = {},
-): Promise<boolean> {
-  const copied = await copyToClipboard(buildPostUrl(post.id));
-  if (!copied) {
-    toast.error("تعذر نسخ رابط المنشور");
-    return false;
-  }
-  await recordShare(post, userId);
-  if (!options.silent) toast.success("تم نسخ رابط المنشور إلى الحافظة");
-  return true;
-}
-
-/**
- * Legacy one-shot share (native sheet → clipboard fallback). Kept for callers
- * that do not open the share menu; both paths record the same `post_shares` row.
- */
-export async function sharePost(post: Post, userId: string): Promise<void> {
-  const url = buildPostUrl(post.id);
-  const title = `منشور ${displayName(post.author)} على آني`;
-  const text = postShareText(post);
-
-  if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
-    try {
-      await navigator.share({ title, text, url });
-    } catch (error) {
-      if ((error as { name?: string } | null)?.name === "AbortError") return;
-    }
-  } else if (!(await copyPostLink(post, userId, { silent: true }))) {
-    return;
-  }
-
-  const persisted = await recordShare(post, userId);
-  toast.success("تمت مشاركة المنشور");
-  if (!persisted && !supabaseConfigured) {
-    toast.info("تم احتساب المشاركة على هذا الجهاز فقط");
   }
 }
 
@@ -1185,9 +862,7 @@ export async function createComment(
     };
     const existing = readLocalComments(post.id);
     writeLocalComments(post.id, [...existing, local]);
-    writeLocalFlag(userId, post.id, {
-      comments: before.comments + 1,
-    });
+    writeLocalFlag(userId, post.id, { comments: before.comments + 1 });
     markPending(post.id, userId, -1);
     return local;
   }
@@ -1205,13 +880,7 @@ export async function createComment(
       return null;
     }
 
-    void notifyUser(
-      post.user_id,
-      userId,
-      "comment",
-      post.id,
-      "علّق على منشورك",
-    );
+    void notifyUser(post.user_id, userId, "comment", post.id, "علّق على منشورك");
 
     return normalizeComment(data);
   } catch {
@@ -1269,7 +938,151 @@ export async function deleteComment(
 }
 
 /* ------------------------------------------------------------------ */
-/* Realtime                                                            */
+/* Threaded Comments & Interactions (New Extensions)                  */
+/* ------------------------------------------------------------------ */
+
+export async function fetchCommentsWithReplies(
+  postId: string,
+  currentUserId?: string
+): Promise<CommentWithDetails[]> {
+  if (!supabaseConfigured || !postId) return [];
+
+  const { data: comments, error } = await supabase
+    .from('comments')
+    .select(`
+      *,
+      profiles (
+        full_name,
+        username,
+        avatar_url
+      )
+    `)
+    .eq('post_id', postId)
+    .order('created_at', { ascending: true });
+
+  if (error || !comments) {
+    console.error('Error fetching comments:', error);
+    return [];
+  }
+
+  const commentIds = comments.map((c) => c.id);
+  
+  let likes: { comment_id: string; user_id: string }[] = [];
+  if (commentIds.length > 0) {
+    const { data: likesData } = await supabase
+      .from('comment_likes')
+      .select('comment_id, user_id')
+      .in('comment_id', commentIds);
+    likes = (likesData as { comment_id: string; user_id: string }[]) || [];
+  }
+
+  const likesMap = new Map<string, { count: number; isLiked: boolean }>();
+  likes.forEach((l) => {
+    const current = likesMap.get(l.comment_id) || { count: 0, isLiked: false };
+    likesMap.set(l.comment_id, {
+      count: current.count + 1,
+      isLiked: current.isLiked || (currentUserId ? l.user_id === currentUserId : false),
+    });
+  });
+
+  const formatted: CommentWithDetails[] = comments.map((c: RawRow) => ({
+    id: String(c.id),
+    post_id: String(c.post_id),
+    user_id: String(c.user_id),
+    parent_id: c.parent_id ? String(c.parent_id) : null,
+    content: String(c.content ?? ''),
+    image_url: c.image_url ? String(c.image_url) : null,
+    created_at: String(c.created_at ?? new Date().toISOString()),
+    profiles: c.profiles ? {
+      full_name: String(c.profiles.full_name ?? ''),
+      username: String(c.profiles.username ?? ''),
+      avatar_url: c.profiles.avatar_url ? String(c.profiles.avatar_url) : null,
+    } : null,
+    likes_count: likesMap.get(c.id)?.count || 0,
+    is_liked: likesMap.get(c.id)?.isLiked || false,
+    replies: [],
+  }));
+
+  const rootComments: CommentWithDetails[] = [];
+  const map = new Map<string, CommentWithDetails>();
+
+  formatted.forEach((item) => map.set(item.id, item));
+  formatted.forEach((item) => {
+    if (item.parent_id && map.has(item.parent_id)) {
+      map.get(item.parent_id)!.replies!.push(item);
+    } else {
+      rootComments.push(item);
+    }
+  });
+
+  return rootComments;
+}
+
+export async function toggleCommentLike(
+  commentId: string,
+  userId: string,
+  commentOwnerId: string,
+  isLiked: boolean
+): Promise<void> {
+  if (!supabaseConfigured) return;
+
+  if (isLiked) {
+    await supabase
+      .from('comment_likes')
+      .delete()
+      .eq('comment_id', commentId)
+      .eq('user_id', userId);
+  } else {
+    await supabase
+      .from('comment_likes')
+      .insert({ comment_id: commentId, user_id: userId });
+
+    if (userId && commentOwnerId && userId !== commentOwnerId) {
+      await supabase.from('notifications').insert({
+        user_id: commentOwnerId,
+        actor_id: userId,
+        type: 'comment_like',
+        comment_id: commentId,
+      });
+    }
+  }
+}
+
+export async function uploadCommentImage(file: File): Promise<string | null> {
+  if (!supabaseConfigured) return null;
+
+  const fileExt = file.name.split('.').pop();
+  const filePath = `comment_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
+  const { error } = await supabase.storage
+    .from('comment-attachments')
+    .upload(filePath, file);
+
+  if (error) {
+    console.error('Error uploading comment image:', error);
+    return null;
+  }
+
+  const { data } = supabase.storage
+    .from('comment-attachments')
+    .getPublicUrl(filePath);
+
+  return data.publicUrl;
+}
+
+export async function translateText(text: string, targetLang = 'ar'): Promise<string> {
+  try {
+    const res = await fetch(
+      `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=Autodetect|${targetLang}`
+    );
+    const data = await res.json();
+    return data.responseData?.translatedText || text;
+  } catch {
+    return text;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Realtime Subscription & Hooks                                       */
 /* ------------------------------------------------------------------ */
 
 const dirtyPosts = new Set<string>();
@@ -1296,7 +1109,6 @@ function handleChange(
   scheduleHydration(userId);
 }
 
-/** Apply denormalised counters pushed by the posts table triggers. */
 function handlePostUpdate(
   payload: RealtimePostgresChangesPayload<RawRow>,
   userId: string,
@@ -1334,7 +1146,7 @@ let realtimeUserId: string | null = null;
 function buildChannel(userId: string): RealtimeChannel {
   let channel = supabase.channel(`aani-interactions-${userId}`);
 
-  (["likes", "comments", "reposts", "bookmarks", "post_shares"] as const).forEach(
+  (["likes", "comments", "reposts", "bookmarks", "post_shares", "comment_likes"] as const).forEach(
     (table) => {
       channel = channel.on(
         "postgres_changes",
@@ -1363,7 +1175,6 @@ function buildChannel(userId: string): RealtimeChannel {
   return channel;
 }
 
-/** Mount once (in the app shell) to keep counters live for every user. */
 export function useInteractionRealtime(userId: string | null | undefined): void {
   useEffect(() => {
     if (!supabaseConfigured || !userId) return;
@@ -1396,11 +1207,6 @@ export function useInteractionRealtime(userId: string | null | undefined): void 
   }, [userId]);
 }
 
-/* ------------------------------------------------------------------ */
-/* React hooks                                                         */
-/* ------------------------------------------------------------------ */
-
-/** Re-renders a component whenever any interaction snapshot changes. */
 export function useInteractionsVersion(): number {
   return useSyncExternalStore(
     subscribe,
@@ -1417,7 +1223,6 @@ export type PostInteractions = InteractionSnapshot & {
   share: () => Promise<void>;
 };
 
-/** Live interaction state for one post + bound optimistic actions. */
 export function usePostInteractions(
   post: Post,
   userId: string,
@@ -1436,8 +1241,6 @@ export function usePostInteractions(
     if (!cache.has(key)) {
       patchCache(post.id, userId, snapshotFromPost(post, userId));
     }
-    // Cheap by default: hydratePosts skips posts that were already fetched
-    // moments ago, so a 50-card feed does not fire 50 extra requests.
     void hydratePosts([post], userId);
   }, [key, post, userId]);
 
@@ -1450,12 +1253,11 @@ export function usePostInteractions(
   );
   const onRepost = useCallback(async () => {
     await toggleRepost(post, userId);
-    // Let profile/feed views know they may need to merge/unmerge this repost.
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("aani:repost-changed"));
     }
   }, [post, userId]);
-  const onShare = useCallback(() => sharePost(post, userId), [post, userId]);
+  const onShare = useCallback(() => recordShare(post, userId).then(() => {}), [post, userId]);
 
   return {
     ...state,
@@ -1464,20 +1266,6 @@ export function usePostInteractions(
     toggleBookmark: onBookmark,
     toggleRepost: onRepost,
     share: onShare,
-  };
-}
-
-function normalizeComment(row: RawRow): PostCommentRow {
-  return {
-    id: String(row.id),
-    post_id: String(row.post_id ?? ""),
-    user_id: String(row.user_id ?? ""),
-    content: String(row.content ?? ""),
-    created_at: String(row.created_at ?? new Date().toISOString()),
-    author:
-      (row.author as CommentAuthor) ??
-      (row.profiles as CommentAuthor) ??
-      null,
   };
 }
 
@@ -1494,10 +1282,6 @@ export type PostComments = {
   remove: (commentId: string) => Promise<void>;
 };
 
-/**
- * Comments for one post. Loaded on demand, kept in sync with realtime and
- * never lost on refresh (they live in the comments table).
- */
 export function usePostComments(
   post: Post,
   userId: string,
@@ -1509,6 +1293,20 @@ export function usePostComments(
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadedRef = useRef(false);
+
+  function normalizeComment(row: RawRow): PostCommentRow {
+    return {
+      id: String(row.id),
+      post_id: String(row.post_id ?? ""),
+      user_id: String(row.user_id ?? ""),
+      content: String(row.content ?? ""),
+      created_at: String(row.created_at ?? new Date().toISOString()),
+      author:
+        (row.author as CommentAuthor) ??
+        (row.profiles as CommentAuthor) ??
+        null,
+    };
+  }
 
   const load = useCallback(async () => {
     if (!supabaseConfigured) {
@@ -1557,14 +1355,12 @@ export function usePostComments(
     void load();
   }, [enabled, load]);
 
-  // Reset when the post changes.
   useEffect(() => {
     loadedRef.current = false;
     setComments(null);
     setError(null);
   }, [post.id]);
 
-  // Live comments for the opened post.
   useEffect(() => {
     if (!enabled || !supabaseConfigured) return;
     const channel = supabase
@@ -1596,7 +1392,6 @@ export function usePostComments(
               }
               return [...previous, { ...normalizeComment(record), author: null }];
             });
-            // Fetch the author for comments created by other users.
             void supabase
               .from("comments")
               .select(COMMENT_SELECT)
@@ -1688,7 +1483,6 @@ export type SavedPostsState = {
   refresh: () => Promise<void>;
 };
 
-/** Posts bookmarked by the user, newest first, with real interaction data. */
 export function useSavedPosts(userId: string): SavedPostsState {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1732,8 +1526,6 @@ export function useSavedPosts(userId: string): SavedPostsState {
       }
 
       if (!supabaseConfigured) {
-        // Bookmarks saved on this device only: there is no server to read the
-        // posts from, so there is nothing more we can display.
         setPosts([]);
         return;
       }
@@ -1766,7 +1558,6 @@ export function useSavedPosts(userId: string): SavedPostsState {
     void refresh();
   }, [refresh]);
 
-  // Drop posts that the user un-bookmarks while the page is open.
   useInteractionsVersion();
   const visible = posts.filter(
     (post) => readCache(post.id, userId)?.bookmarked !== false,
