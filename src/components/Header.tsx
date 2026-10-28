@@ -70,7 +70,9 @@ export const Header: React.FC<HeaderProps> = ({ currentUserId }) => {
   const handleOpenDrawer = async () => {
     setIsDrawerOpen(true);
 
-    if (unreadCount === 0) return;
+    if (unreadCount === 0) {
+      return;
+    }
 
     setUnreadCount(0);
     setNotifications((prev) =>
@@ -87,22 +89,6 @@ export const Header: React.FC<HeaderProps> = ({ currentUserId }) => {
 
     if (error) {
       console.error('Failed to mark notifications as read:', error);
-    }
-  };
-
-  const markAsRead = async (id: string) => {
-    const { error } = await supabase
-      .from('notifications')
-      .update({ read: true })
-      .eq('id', id);
-
-    if (!error) {
-      setNotifications((prev) =>
-        prev.map((notification) =>
-          notification.id === id ? { ...notification, read: true } : notification
-        )
-      );
-      setUnreadCount((prev) => Math.max(0, prev - 1));
     }
   };
 
@@ -129,7 +115,6 @@ export const Header: React.FC<HeaderProps> = ({ currentUserId }) => {
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
         notifications={notifications}
-        onMarkAsRead={markAsRead}
       />
     </>
   );
