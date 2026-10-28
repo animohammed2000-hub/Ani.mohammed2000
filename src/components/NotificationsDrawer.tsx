@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Notification } from '../types/notification';
+import { supabase } from '../lib/supabase'; // تنبيه: تأكد من مطابق مسار استيراد ملف supabase لديك
 
 interface Props {
   isOpen: boolean;
@@ -11,9 +12,54 @@ interface Props {
 export const NotificationsDrawer: React.FC<Props> = ({
   isOpen,
   onClose,
-  notifications,
+  notifications: initialNotifications,
   onMarkAsRead,
 }) => {
+  const [notifications, setNotifications] = useState<Notification[]>(initialNotifications);
+
+  // مزامنة الإشعارات القادمة عبر الـ Props عند التحديث
+  useEffect(() => {
+    setNotifications(initialNotifications);
+  }, [initialNotifications]);
+
+  // تفعيل الاستماع اللحظي (Realtime Subscription)
+  useEffect(() => {
+    const channel = supabase
+      .channel('realtime_notifications_drawer')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notifications',
+        },
+        async (payload) => {
+          const newNotification = payload.new as Notification;
+
+          // جلب تفاصيل التفاعل والمستخدم (Actor) للإشعار الجديد
+          if (newNotification.actor_id) {
+            const { data: actor } = await supabase
+              .from('profiles')
+              .select('full_name, avatar_url')
+              .eq('id', newNotification.actor_id)
+              .single();
+
+            if (actor) {
+              newNotification.actor = actor;
+            }
+          }
+
+          // إضافة الإشعار الجديد في أعلى القائمة فوراً
+          setNotifications((prev) => [newNotification, ...prev]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
   if (!isOpen) return null;
 
   return (
