@@ -1,0 +1,5 @@
+[build]
+  command = "pnpm --filter @workspace/aani-social... run build"
+  # Vite writes its output inside the app package (see artifacts/aani-social/vite.config.ts),
+  # so the publish directory must point there rather than at the repo root.
+  publish = "artifacts/aani-social/dist/public"
