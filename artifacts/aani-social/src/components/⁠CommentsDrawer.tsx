@@ -49,6 +49,7 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [pendingCommentLikeIds, setPendingCommentLikeIds] = useState<Record<string, boolean>>({});
   const [currentUser, setCurrentUser] = useState<{
     full_name: string;
     username: string;
@@ -146,6 +147,7 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
 
   const handleSubmit = async () => {
     const nextContent = content.trim();
+    if (submitting) return;
     if (!nextContent && !selectedImage) return;
 
     setSubmitting(true);
@@ -189,16 +191,28 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   };
 
   const handleToggleLike = async (commentId: string, isLiked: boolean) => {
-    const allComments = [
-      ...comments,
-      ...comments.flatMap((c) => c.replies || []),
-    ];
-    const target = allComments.find((c) => c.id === commentId);
-    const ownerId = target?.user_id;
-    if (!ownerId) return;
+    if (pendingCommentLikeIds[commentId]) return;
 
-    await toggleCommentLike(commentId, currentUserId, ownerId, isLiked);
-    await loadComments();
+    setPendingCommentLikeIds((prev) => ({ ...prev, [commentId]: true }));
+
+    try {
+      const allComments = [
+        ...comments,
+        ...comments.flatMap((c) => c.replies || []),
+      ];
+      const target = allComments.find((c) => c.id === commentId);
+      const ownerId = target?.user_id;
+      if (!ownerId) return;
+
+      await toggleCommentLike(commentId, currentUserId, ownerId, isLiked);
+      await loadComments();
+    } finally {
+      setPendingCommentLikeIds((prev) => {
+        const next = { ...prev };
+        delete next[commentId];
+        return next;
+      });
+    }
   };
 
   if (!isOpen) return null;
