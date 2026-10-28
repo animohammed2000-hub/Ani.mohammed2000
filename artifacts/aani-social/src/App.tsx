@@ -42,7 +42,7 @@ function PostCard({
   const [isAnimating, setIsAnimating] = useState(false);
   const [isLikePending, setIsLikePending] = useState(false);
 
-  const toggleLike = async () => {
+  const toggleLike = () => {
     if (isLikePending) return;
 
     const prevLiked = liked;
@@ -81,9 +81,7 @@ function PostCard({
         </div>
       </header>
 
-      {post.content && (
-        <p className="mb-4 text-sm leading-7 text-zinc-200">{post.content}</p>
-      )}
+      {post.content && <p className="mb-4 text-sm leading-7 text-zinc-200">{post.content}</p>}
 
       <div className="mt-2 rounded-2xl border border-zinc-800 bg-zinc-950/70 p-3">
         <div className="mb-3 h-48 rounded-2xl bg-gradient-to-br from-zinc-800 via-zinc-700 to-zinc-900" />
@@ -119,13 +117,7 @@ function PostCard({
   );
 }
 
-function FeedScreen({
-  posts,
-  onOpenComments,
-}: {
-  posts: Post[];
-  onOpenComments: (postId: string) => void;
-}) {
+function FeedScreen({ posts, onOpenComments }: { posts: Post[]; onOpenComments: (postId: string) => void }) {
   return (
     <main className="flex-1 p-4 sm:p-6">
       <div className="mx-auto max-w-2xl space-y-4">
@@ -202,6 +194,7 @@ function ProfileScreen() {
             <div className="text-sm text-zinc-400" dir="ltr">@mohammed</div>
           </div>
         </div>
+
         <div className="grid grid-cols-3 gap-3 text-center">
           <div className="rounded-2xl bg-zinc-800 p-3">
             <div className="text-xl font-bold text-white">142</div>
