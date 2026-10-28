@@ -623,27 +623,6 @@ export function decoratePost(post: Post, userId: string): Post {
 /* Mutations                                                           */
 /* ------------------------------------------------------------------ */
 
-async function notifyUser(
-  recipientId: string,
-  actorId: string,
-  type: "like" | "comment" | "repost" | "follow" | "share" | "comment_like" | "reply",
-  postId: string,
-  content: string,
-): Promise<void> {
-  if (!supabaseConfigured || !recipientId || recipientId === actorId) return;
-  try {
-    await supabase.from("notifications").insert({
-      user_id: recipientId,
-      actor_id: actorId,
-      type,
-      reference_id: postId,
-      content,
-    });
-  } catch {
-    /* ignore */
-  }
-}
-
 export async function toggleLike(post: Post, userId: string): Promise<void> {
   if (isPending(post.id, userId)) return;
 
@@ -672,9 +651,6 @@ export async function toggleLike(post: Post, userId: string): Promise<void> {
     }
 
     writeLocalFlag(userId, post.id, { liked, likes });
-    if (liked) {
-      void notifyUser(post.user_id, userId, "like", post.id, "أعجب بمنشورك");
-    }
   } catch {
     patchCache(post.id, userId, { liked: before.liked, likes: before.likes });
     toast.error("تعذر حفظ الإعجاب، تحقق من الاتصال وحاول مجدداً");
@@ -758,9 +734,6 @@ export async function toggleRepost(post: Post, userId: string): Promise<void> {
     stored = true;
     writeLocalFlag(userId, post.id, { reposted });
     toast.success(reposted ? "تمت إعادة نشر المنشور" : "تمت إزالة إعادة النشر");
-    if (reposted) {
-      void notifyUser(post.user_id, userId, "repost", post.id, "أعاد نشر منشورك");
-    }
   } finally {
     markPending(post.id, userId, -1);
   }
@@ -880,8 +853,6 @@ export async function createComment(
       return null;
     }
 
-    void notifyUser(post.user_id, userId, "comment", post.id, "علّق على منشورك");
-
     return normalizeComment(data);
   } catch {
     patchCache(post.id, userId, { comments: before.comments });
@@ -966,7 +937,7 @@ export async function fetchCommentsWithReplies(
   }
 
   const commentIds = comments.map((c) => c.id);
-  
+
   let likes: { comment_id: string; user_id: string }[] = [];
   if (commentIds.length > 0) {
     const { data: likesData } = await supabase
@@ -1035,16 +1006,13 @@ export async function toggleCommentLike(
   } else {
     await supabase
       .from('comment_likes')
-      .insert({ comment_id: commentId, user_id: userId });
-
-    if (userId && commentOwnerId && userId !== commentOwnerId) {
-      await supabase.from('notifications').insert({
-        user_id: commentOwnerId,
-        actor_id: userId,
-        type: 'comment_like',
-        comment_id: commentId,
-      });
-    }
+      .upsert(
+        { comment_id: commentId, user_id: userId },
+        {
+          onConflict: 'comment_id,user_id',
+          ignoreDuplicates: true,
+        },
+      );
   }
 }
 
@@ -1269,6 +1237,20 @@ export function usePostInteractions(
   };
 }
 
+function normalizeComment(row: RawRow): PostCommentRow {
+  return {
+    id: String(row.id),
+    post_id: String(row.post_id ?? ""),
+    user_id: String(row.user_id ?? ""),
+    content: String(row.content ?? ""),
+    created_at: String(row.created_at ?? new Date().toISOString()),
+    author:
+      (row.author as CommentAuthor) ??
+      (row.profiles as CommentAuthor) ??
+      null,
+  };
+}
+
 const COMMENT_SELECT =
   "id, post_id, user_id, content, created_at, author:profiles(id,username,full_name,display_name,avatar_url,bio)";
 
@@ -1293,20 +1275,6 @@ export function usePostComments(
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadedRef = useRef(false);
-
-  function normalizeComment(row: RawRow): PostCommentRow {
-    return {
-      id: String(row.id),
-      post_id: String(row.post_id ?? ""),
-      user_id: String(row.user_id ?? ""),
-      content: String(row.content ?? ""),
-      created_at: String(row.created_at ?? new Date().toISOString()),
-      author:
-        (row.author as CommentAuthor) ??
-        (row.profiles as CommentAuthor) ??
-        null,
-    };
-  }
 
   const load = useCallback(async () => {
     if (!supabaseConfigured) {
