@@ -66,6 +66,44 @@ test("retries when only the message (not the code) identifies a missing column",
   );
 });
 
+/**
+ * Observed directly against the live project (whvhxgfdumxzunzsjkll) with the
+ * publishable key: selecting each column of `reports` returns
+ *   200 for post_id / user_id / reason
+ *   400 42703 "column reports.reporter_id does not exist"   (and .reported_user_id, .status)
+ * so the predicate below is the one production actually hits.
+ */
+test("the exact live reports error triggers the legacy retry", () => {
+  const liveError = {
+    code: "42703",
+    details: null,
+    hint: null,
+    message: "column reports.reporter_id does not exist",
+  };
+
+  assert.equal(shouldRetryWithLegacyShape(liveError), true);
+});
+
+test("legacy payload uses exactly the columns the live table has", () => {
+  // Live column set, verified by probing the deployed project.
+  const liveColumns = ["post_id", "reason", "user_id"];
+
+  assert.deepEqual(
+    Object.keys(buildLegacyReportPayload(input)).sort(),
+    liveColumns,
+  );
+});
+
+test("migrated payload uses exactly the five migrated columns", () => {
+  assert.deepEqual(Object.keys(buildReportPayload(input)).sort(), [
+    "post_id",
+    "reason",
+    "reported_user_id",
+    "reporter_id",
+    "status",
+  ]);
+});
+
 test("does not retry on success", () => {
   assert.equal(shouldRetryWithLegacyShape(null), false);
 });
