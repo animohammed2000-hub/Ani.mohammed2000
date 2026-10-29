@@ -1,6 +1,14 @@
 
 import React, { useState } from 'react';
-import { Heart, Reply, Sparkles, X } from 'lucide-react';
+import {
+  Heart,
+  Languages,
+  MoreHorizontal,
+  Reply,
+  ThumbsDown,
+  Trash2,
+  X,
+} from 'lucide-react';
 import type { CommentWithDetails } from '../lib/interactions';
 
 interface CommentItemProps {
@@ -8,7 +16,11 @@ interface CommentItemProps {
   currentUserId?: string;
   depth?: number;
   onReply: (comment: CommentWithDetails) => void;
-  onToggleLike: (commentId: string, isLiked: boolean) => void;
+  onToggleLike: (commentId: string, isLiked: boolean) => void | Promise<void>;
+  onToggleDislike: (commentId: string, isDisliked: boolean) => void | Promise<void>;
+  onDelete: (comment: CommentWithDetails) => void | Promise<void>;
+  pendingReactionIds?: Record<string, boolean>;
+  pendingDeleteIds?: Record<string, boolean>;
 }
 
 const formatRelativeTime = (value: string): string => {
@@ -84,9 +96,14 @@ async function translateCommentToArabic(text: string): Promise<string> {
 
 export const CommentItem: React.FC<CommentItemProps> = ({
   comment,
+  currentUserId,
   depth = 0,
   onReply,
   onToggleLike,
+  onToggleDislike,
+  onDelete,
+  pendingReactionIds = {},
+  pendingDeleteIds = {},
 }) => {
   const [showTranslated, setShowTranslated] = useState(false);
   const [translatedText, setTranslatedText] = useState<string | null>(null);
@@ -94,11 +111,15 @@ export const CommentItem: React.FC<CommentItemProps> = ({
   const [translationError, setTranslationError] = useState<string | null>(null);
   const [showReplies, setShowReplies] = useState(true);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
+  const [showMenu, setShowMenu] = useState(false);
 
   const replyCount = comment.replies?.length ?? 0;
   const author = comment.profiles;
   const displayName = author?.full_name || 'مستخدم آني';
   const username = author?.username ? `@${author.username}` : '@user';
+  const isOwnComment = currentUserId === comment.user_id;
+  const isReactionPending = !!pendingReactionIds[comment.id];
+  const isDeleting = !!pendingDeleteIds[comment.id];
 
   const handleTranslation = async () => {
     if (isTranslating) return;
@@ -137,8 +158,9 @@ export const CommentItem: React.FC<CommentItemProps> = ({
   return (
     <div className="relative">
       <div
-        className="relative flex gap-3 rounded-2xl border border-zinc-800 bg-zinc-950/60 p-3 shadow-sm"
+        className="relative flex gap-3 border-b border-zinc-800/80 py-4"
         style={{ marginRight: `${depth * 12}px` }}
+        dir="rtl"
       >
         {depth > 0 && (
           <div className="absolute bottom-0 top-0 right-[-6px] w-px bg-zinc-700/80" />
@@ -149,32 +171,61 @@ export const CommentItem: React.FC<CommentItemProps> = ({
             <img
               src={author.avatar_url}
               alt={displayName}
-              className="h-10 w-10 rounded-full object-cover ring-2 ring-zinc-800"
+              className="h-11 w-11 rounded-full object-cover ring-2 ring-zinc-800"
             />
           ) : (
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-violet-600 text-sm font-bold text-white ring-2 ring-zinc-800">
+            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-violet-600 text-sm font-bold text-white ring-2 ring-zinc-800">
               {buildInitials(displayName)}
             </div>
           )}
         </div>
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-bold text-white">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+              <p className="truncate text-sm font-bold text-zinc-100">
                 {displayName}
               </p>
-              <p className="text-[11px] text-zinc-400" dir="ltr">
+              <p className="truncate text-xs text-zinc-400" dir="ltr">
                 {username}
               </p>
+              <span className="shrink-0 text-[11px] text-zinc-500">
+                {formatRelativeTime(comment.created_at)}
+              </span>
             </div>
 
-            <span className="shrink-0 text-[10px] text-zinc-500">
-              {formatRelativeTime(comment.created_at)}
-            </span>
+            {isOwnComment && (
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowMenu((visible) => !visible)}
+                  className="rounded-full p-1 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
+                  aria-label="خيارات التعليق"
+                  aria-expanded={showMenu}
+                >
+                  <MoreHorizontal size={18} />
+                </button>
+                {showMenu && (
+                  <div className="absolute left-0 top-full z-20 min-w-32 rounded-xl border border-zinc-700 bg-zinc-900 p-1 shadow-xl">
+                    <button
+                      type="button"
+                      disabled={isDeleting}
+                      onClick={() => {
+                        setShowMenu(false);
+                        void onDelete(comment);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-right text-xs text-red-300 hover:bg-zinc-800 disabled:opacity-50"
+                    >
+                      <Trash2 size={14} />
+                      حذف التعليق
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
-          <div className="mt-2 text-sm leading-7 text-zinc-200" dir="rtl">
+          <div className="mt-2 whitespace-pre-wrap break-words text-[15px] leading-8 text-zinc-100" dir="auto">
             {showTranslated && translatedText !== null
               ? translatedText
               : comment.content}
@@ -204,45 +255,69 @@ export const CommentItem: React.FC<CommentItemProps> = ({
             </button>
           )}
 
-          <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-zinc-400">
+          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-zinc-400">
             <button
               type="button"
-              onClick={() => onToggleLike(comment.id, !!comment.is_liked)}
-              className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 transition ${
+              onClick={() => onReply(comment)}
+              className="inline-flex items-center gap-1.5 py-1 transition hover:text-zinc-100"
+              aria-label={`الرد${replyCount ? `، ${replyCount} ردود` : ''}`}
+            >
+              <Reply size={17} style={{ transform: 'scaleX(-1)' }} />
+              <span>رد</span>
+              {replyCount > 0 && <span>{replyCount}</span>}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleTranslation}
+              disabled={isTranslating || !comment.content.trim()}
+              aria-busy={isTranslating}
+              className="inline-flex items-center gap-1.5 py-1 transition hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Languages size={17} />
+              {isTranslating
+                ? 'جارٍ الترجمة...'
+                : showTranslated
+                  ? 'النص الأصلي'
+                  : 'ترجمة'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void onToggleLike(comment.id, !!comment.is_liked)}
+              disabled={isReactionPending}
+              aria-pressed={!!comment.is_liked}
+              className={`inline-flex items-center gap-1.5 py-1 transition disabled:cursor-wait disabled:opacity-60 ${
                 comment.is_liked
-                  ? 'bg-pink-500/15 text-pink-300'
-                  : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                  ? 'text-pink-400'
+                  : 'text-zinc-400 hover:text-zinc-100'
               }`}
+              aria-label={`إعجاب، ${comment.likes_count ?? 0}`}
             >
               <Heart
-                size={14}
+                size={20}
                 fill={comment.is_liked ? 'currentColor' : 'none'}
+                strokeWidth={1.8}
               />
               {comment.likes_count ?? 0}
             </button>
 
             <button
               type="button"
-              onClick={() => onReply(comment)}
-              className="inline-flex items-center gap-1.5 rounded-full bg-zinc-800 px-2 py-1 text-zinc-300 transition hover:bg-zinc-700"
+              onClick={() =>
+                void onToggleDislike(comment.id, !!comment.is_disliked)
+              }
+              disabled={isReactionPending}
+              aria-pressed={!!comment.is_disliked}
+              className={`inline-flex items-center gap-1.5 py-1 transition disabled:cursor-wait disabled:opacity-60 ${
+                comment.is_disliked
+                  ? 'text-pink-400'
+                  : 'text-zinc-400 hover:text-zinc-100'
+              }`}
+              aria-label={`عدم إعجاب، ${comment.dislikes_count ?? 0}`}
             >
-              <Reply size={14} />
-              رد
-            </button>
-
-            <button
-              type="button"
-              onClick={handleTranslation}
-              disabled={isTranslating}
-              aria-busy={isTranslating}
-              className="inline-flex items-center gap-1.5 rounded-full bg-zinc-800 px-2 py-1 text-zinc-300 transition hover:bg-zinc-700 disabled:cursor-wait disabled:opacity-60"
-            >
-              <Sparkles size={14} />
-              {isTranslating
-                ? 'جارٍ الترجمة...'
-                : showTranslated
-                  ? 'نص أصلي'
-                  : 'ترجمة'}
+              <ThumbsDown size={20} strokeWidth={1.8} />
+              {comment.dislikes_count ?? 0}
             </button>
           </div>
         </div>
@@ -267,8 +342,13 @@ export const CommentItem: React.FC<CommentItemProps> = ({
               key={reply.id}
               comment={reply}
               depth={depth + 1}
+              currentUserId={currentUserId}
               onReply={onReply}
               onToggleLike={onToggleLike}
+              onToggleDislike={onToggleDislike}
+              onDelete={onDelete}
+              pendingReactionIds={pendingReactionIds}
+              pendingDeleteIds={pendingDeleteIds}
             />
           ))}
         </div>

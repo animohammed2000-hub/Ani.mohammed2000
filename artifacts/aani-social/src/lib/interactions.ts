@@ -15,7 +15,7 @@ import type {
   RealtimePostgresChangesPayload,
 } from "@supabase/supabase-js";
 
-import { supabase, supabaseConfigured } from "./supabase";
+import { storageBucket, supabase, supabaseConfigured } from "./supabase";
 import { displayName, type Post, type Profile } from "./types";
 
 /* ------------------------------------------------------------------ */
@@ -60,7 +60,9 @@ export interface CommentWithDetails {
     avatar_url: string | null;
   } | null;
   likes_count?: number;
+  dislikes_count?: number;
   is_liked?: boolean;
+  is_disliked?: boolean;
   replies?: CommentWithDetails[];
 }
 
@@ -78,15 +80,6 @@ type LocalPostState = {
 };
 
 type LocalFlags = Record<string, LocalPostState>;
-
-type LocalComment = {
-  id: string;
-  post_id: string;
-  user_id: string;
-  content: string;
-  created_at: string;
-  author: Partial<Profile> | null;
-};
 
 const EMPTY_SNAPSHOT: InteractionSnapshot = {
   likes: 0,
@@ -280,32 +273,6 @@ function writeLocalFlag(
   localFlagCache.set(userId, all);
   try {
     window.localStorage.setItem(localKey(userId), JSON.stringify(all));
-  } catch {
-    /* ignore */
-  }
-}
-
-const LOCAL_COMMENTS_KEY = "aani:comments:v1";
-
-function readLocalComments(postId: string): LocalComment[] {
-  try {
-    const raw = window.localStorage.getItem(LOCAL_COMMENTS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as Record<string, LocalComment[]>;
-    return Array.isArray(parsed[postId]) ? parsed[postId] : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeLocalComments(postId: string, comments: LocalComment[]): void {
-  try {
-    const raw = window.localStorage.getItem(LOCAL_COMMENTS_KEY);
-    const parsed = raw
-      ? (JSON.parse(raw) as Record<string, LocalComment[]>)
-      : {};
-    parsed[postId] = comments;
-    window.localStorage.setItem(LOCAL_COMMENTS_KEY, JSON.stringify(parsed));
   } catch {
     /* ignore */
   }
@@ -819,43 +786,28 @@ export async function createComment(
 ): Promise<PostCommentRow | null> {
   const trimmed = content.trim();
   if (!trimmed) return null;
+  if (!supabaseConfigured || !userId) {
+    toast.error("لا يمكن نشر التعليق دون الاتصال بقاعدة البيانات");
+    return null;
+  }
 
   markPending(post.id, userId, 1);
-  const before = readInteractionState(post, userId);
-  patchCache(post.id, userId, { comments: before.comments + 1 });
-
-  if (!supabaseConfigured) {
-    const local: LocalComment = {
-      id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      post_id: post.id,
-      user_id: userId,
-      content: trimmed,
-      created_at: new Date().toISOString(),
-      author: null,
-    };
-    const existing = readLocalComments(post.id);
-    writeLocalComments(post.id, [...existing, local]);
-    writeLocalFlag(userId, post.id, { comments: before.comments + 1 });
-    markPending(post.id, userId, -1);
-    return local;
-  }
 
   try {
     const { data, error } = await supabase
       .from("comments")
       .insert({ post_id: post.id, user_id: userId, content: trimmed })
       .select("id, post_id, user_id, content, created_at")
-      .maybeSingle();
+      .single();
 
     if (error || !data) {
-      patchCache(post.id, userId, { comments: before.comments });
       toast.error("تعذر نشر التعليق، حاول مرة أخرى");
       return null;
     }
 
+    toast.success("تم نشر التعليق");
     return normalizeComment(data);
   } catch {
-    patchCache(post.id, userId, { comments: before.comments });
     toast.error("تعذر نشر التعليق، حاول مرة أخرى");
     return null;
   } finally {
@@ -869,38 +821,27 @@ export async function deleteComment(
   userId: string,
   commentId: string,
 ): Promise<boolean> {
-  if (!supabaseConfigured) {
-    const remaining = readLocalComments(post.id).filter(
-      (item) => item.id !== commentId,
-    );
-    writeLocalComments(post.id, remaining);
-    const before = readInteractionState(post, userId);
-    const comments = Math.max(0, before.comments - 1);
-    patchCache(post.id, userId, { comments });
-    writeLocalFlag(userId, post.id, { comments });
-    return true;
+  if (!supabaseConfigured || !userId) {
+    toast.error("لا يمكن حذف التعليق دون الاتصال بقاعدة البيانات");
+    return false;
   }
   markPending(post.id, userId, 1);
-  const before = readInteractionState(post, userId);
-  patchCache(post.id, userId, {
-    comments: Math.max(0, before.comments - 1),
-  });
 
   try {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("comments")
       .delete()
       .eq("id", commentId)
-      .eq("user_id", userId);
-    if (error) {
-      patchCache(post.id, userId, { comments: before.comments });
+      .eq("user_id", userId)
+      .select("id")
+      .maybeSingle();
+    if (error || !data) {
       toast.error("تعذر حذف التعليق");
       return false;
     }
     toast.success("تم حذف التعليق");
     return true;
   } catch {
-    patchCache(post.id, userId, { comments: before.comments });
     toast.error("تعذر حذف التعليق");
     return false;
   } finally {
@@ -916,7 +857,10 @@ export async function fetchCommentsWithReplies(
   postId: string,
   currentUserId?: string
 ): Promise<CommentWithDetails[]> {
-  if (!supabaseConfigured || !postId) return [];
+  if (!postId) return [];
+  if (!supabaseConfigured) {
+    throw new Error("الاتصال بقاعدة البيانات غير متاح");
+  }
 
   const { data: comments, error } = await supabase
     .from('comments')
@@ -931,20 +875,28 @@ export async function fetchCommentsWithReplies(
     .eq('post_id', postId)
     .order('created_at', { ascending: true });
 
-  if (error || !comments) {
-    console.error('Error fetching comments:', error);
-    return [];
-  }
+  if (error) throw error;
+  if (!comments) throw new Error("تعذر قراءة التعليقات");
 
   const commentIds = comments.map((c) => c.id);
 
   let likes: { comment_id: string; user_id: string }[] = [];
+  let dislikes: { comment_id: string; user_id: string }[] = [];
   if (commentIds.length > 0) {
-    const { data: likesData } = await supabase
-      .from('comment_likes')
-      .select('comment_id, user_id')
-      .in('comment_id', commentIds);
-    likes = (likesData as { comment_id: string; user_id: string }[]) || [];
+    const [likesResult, dislikesResult] = await Promise.all([
+      supabase
+        .from("comment_likes")
+        .select("comment_id, user_id")
+        .in("comment_id", commentIds),
+      supabase
+        .from("comment_dislikes")
+        .select("comment_id, user_id")
+        .in("comment_id", commentIds),
+    ]);
+    if (likesResult.error) throw likesResult.error;
+    if (dislikesResult.error) throw dislikesResult.error;
+    likes = (likesResult.data ?? []) as typeof likes;
+    dislikes = (dislikesResult.data ?? []) as typeof dislikes;
   }
 
   const likesMap = new Map<string, { count: number; isLiked: boolean }>();
@@ -953,6 +905,20 @@ export async function fetchCommentsWithReplies(
     likesMap.set(l.comment_id, {
       count: current.count + 1,
       isLiked: current.isLiked || (currentUserId ? l.user_id === currentUserId : false),
+    });
+  });
+
+  const dislikesMap = new Map<string, { count: number; isDisliked: boolean }>();
+  dislikes.forEach((dislike) => {
+    const current = dislikesMap.get(dislike.comment_id) || {
+      count: 0,
+      isDisliked: false,
+    };
+    dislikesMap.set(dislike.comment_id, {
+      count: current.count + 1,
+      isDisliked:
+        current.isDisliked ||
+        (currentUserId ? dislike.user_id === currentUserId : false),
     });
   });
 
@@ -971,6 +937,8 @@ export async function fetchCommentsWithReplies(
     } : null,
     likes_count: likesMap.get(c.id)?.count || 0,
     is_liked: likesMap.get(c.id)?.isLiked || false,
+    dislikes_count: dislikesMap.get(c.id)?.count || 0,
+    is_disliked: dislikesMap.get(c.id)?.isDisliked || false,
     replies: [],
   }));
 
@@ -992,19 +960,28 @@ export async function fetchCommentsWithReplies(
 export async function toggleCommentLike(
   commentId: string,
   userId: string,
-  commentOwnerId: string,
-  isLiked: boolean
+  isLiked: boolean,
 ): Promise<void> {
-  if (!supabaseConfigured) return;
+  if (!supabaseConfigured || !userId) {
+    throw new Error("الاتصال بقاعدة البيانات غير متاح");
+  }
 
   if (isLiked) {
-    await supabase
+    const { error } = await supabase
       .from('comment_likes')
       .delete()
       .eq('comment_id', commentId)
       .eq('user_id', userId);
+    if (error) throw error;
   } else {
-    await supabase
+    const { error: oppositeError } = await supabase
+      .from("comment_dislikes")
+      .delete()
+      .eq("comment_id", commentId)
+      .eq("user_id", userId);
+    if (oppositeError) throw oppositeError;
+
+    const { error } = await supabase
       .from('comment_likes')
       .upsert(
         { comment_id: commentId, user_id: userId },
@@ -1013,28 +990,72 @@ export async function toggleCommentLike(
           ignoreDuplicates: true,
         },
       );
+    if (error) throw error;
   }
 }
 
-export async function uploadCommentImage(file: File): Promise<string | null> {
-  if (!supabaseConfigured) return null;
-
-  const fileExt = file.name.split('.').pop();
-  const filePath = `comment_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
-  const { error } = await supabase.storage
-    .from('comment-attachments')
-    .upload(filePath, file);
-
-  if (error) {
-    console.error('Error uploading comment image:', error);
-    return null;
+export async function toggleCommentDislike(
+  commentId: string,
+  userId: string,
+  isDisliked: boolean,
+): Promise<void> {
+  if (!supabaseConfigured || !userId) {
+    throw new Error("الاتصال بقاعدة البيانات غير متاح");
   }
 
-  const { data } = supabase.storage
-    .from('comment-attachments')
-    .getPublicUrl(filePath);
+  if (isDisliked) {
+    const { error } = await supabase
+      .from("comment_dislikes")
+      .delete()
+      .eq("comment_id", commentId)
+      .eq("user_id", userId);
+    if (error) throw error;
+  } else {
+    const { error: oppositeError } = await supabase
+      .from("comment_likes")
+      .delete()
+      .eq("comment_id", commentId)
+      .eq("user_id", userId);
+    if (oppositeError) throw oppositeError;
 
-  return data.publicUrl;
+    const { error } = await supabase
+      .from("comment_dislikes")
+      .upsert(
+        { comment_id: commentId, user_id: userId },
+        { onConflict: "comment_id,user_id", ignoreDuplicates: true },
+      );
+    if (error) throw error;
+  }
+}
+
+export type UploadedCommentImage = {
+  publicUrl: string;
+  path: string;
+};
+
+export async function uploadCommentImage(
+  file: File,
+  userId: string,
+): Promise<UploadedCommentImage> {
+  if (!supabaseConfigured || !userId) {
+    throw new Error("الاتصال بقاعدة البيانات غير متاح");
+  }
+  if (!file.type.startsWith("image/")) {
+    throw new Error("اختر ملف صورة صالحًا");
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    throw new Error("حجم الصورة يجب ألا يتجاوز 10 ميغابايت");
+  }
+
+  const extension = file.name.match(/\.([a-z0-9]{1,8})$/i)?.[1] ?? "jpg";
+  const path = `${userId}/comments/${crypto.randomUUID()}.${extension.toLowerCase()}`;
+  const { error } = await supabase.storage
+    .from(storageBucket)
+    .upload(path, file, { contentType: file.type, upsert: false });
+  if (error) throw error;
+
+  const { data } = supabase.storage.from(storageBucket).getPublicUrl(path);
+  return { publicUrl: data.publicUrl, path };
 }
 
 export async function translateText(text: string, targetLang = 'ar'): Promise<string> {
@@ -1252,7 +1273,7 @@ function normalizeComment(row: RawRow): PostCommentRow {
 }
 
 const COMMENT_SELECT =
-  "id, post_id, user_id, content, created_at, author:profiles(id,username,full_name,display_name,avatar_url,bio)";
+  "id, post_id, user_id, parent_id, content, image_url, created_at, author:profiles(id,username,full_name,display_name,avatar_url,bio)";
 
 export type PostComments = {
   comments: PostCommentRow[] | null;
@@ -1278,15 +1299,9 @@ export function usePostComments(
 
   const load = useCallback(async () => {
     if (!supabaseConfigured) {
-      const rows = readLocalComments(post.id).map((row) => ({
-        ...row,
-        author: row.user_id === userId ? (profile ?? row.author) : row.author,
-      }));
-      setComments(rows);
-      setError(null);
-      if (!isPending(post.id, userId)) {
-        patchCache(post.id, userId, { comments: rows.length });
-      }
+      setComments(null);
+      setError("الاتصال بقاعدة البيانات غير متاح");
+      setLoading(false);
       return;
     }
     setLoading(true);
@@ -1300,7 +1315,6 @@ export function usePostComments(
 
       if (loadError) {
         setError("تعذر تحميل التعليقات");
-        setComments((previous) => previous ?? []);
         return;
       }
 
@@ -1391,50 +1405,31 @@ export function usePostComments(
       const trimmed = content.trim();
       if (!trimmed) return false;
 
-      const tempId = `temp-${Date.now()}`;
-      const optimistic: PostCommentRow = {
-        id: tempId,
-        post_id: post.id,
-        user_id: userId,
-        content: trimmed,
-        created_at: new Date().toISOString(),
-        author: profile,
-      };
-      setComments((previous) => [...(previous ?? []), optimistic]);
       setSending(true);
+      try {
+        const row = await createComment(post, userId, trimmed);
+        if (!row) return false;
 
-      const row = await createComment(post, userId, trimmed);
-
-      setSending(false);
-      if (!row) {
-        setComments((previous) =>
-          previous ? previous.filter((item) => item.id !== tempId) : previous,
-        );
-        return false;
+        setComments((previous) => {
+          const list = previous ?? [];
+          return list.some((item) => item.id === row.id)
+            ? list
+            : [...list, { ...row, author: profile }];
+        });
+        return true;
+      } finally {
+        setSending(false);
       }
-
-      setComments((previous) => {
-        const list = previous ?? [];
-        const withoutTemp = list.filter((item) => item.id !== tempId);
-        return withoutTemp.some((item) => item.id === row.id)
-          ? withoutTemp
-          : [...withoutTemp, { ...row, author: profile }];
-      });
-      return true;
     },
     [post, profile, userId],
   );
 
   const remove = useCallback(
     async (commentId: string) => {
-      const previous = comments;
-      setComments((current) =>
-        current ? current.filter((item) => item.id !== commentId) : current,
-      );
       const ok = await deleteComment(post, userId, commentId);
-      if (!ok) setComments(previous);
+      if (ok) await load();
     },
-    [comments, post, userId],
+    [load, post, userId],
   );
 
   return { comments, loading, sending, error, load, add, remove };

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Heart, MessageCircle } from 'lucide-react';
-import CommentsDrawer from './components/CommentsDrawer';
+import CommentsDrawer from './CommentsDrawer';
 import '@/index.css';
 
 type Post = {
