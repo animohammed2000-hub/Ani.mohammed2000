@@ -1,4 +1,3 @@
-
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AtSign,
@@ -25,10 +24,47 @@ interface CommentsDrawerProps {
   currentUserId: string;
   isOpen: boolean;
   onClose: () => void;
+  initialCommentsCount?: number;
 }
+
+type SupabaseErrorDetails = {
+  message?: string;
+  code?: string;
+  details?: string;
+  hint?: string;
+};
+
+const getErrorDetails = (error: unknown): SupabaseErrorDetails => {
+  if (error instanceof Error) {
+    const details = error as Error & SupabaseErrorDetails;
+
+    return {
+      message: details.message,
+      code: details.code,
+      details: details.details,
+      hint: details.hint,
+    };
+  }
+
+  if (error && typeof error === 'object') {
+    const details = error as SupabaseErrorDetails;
+
+    return {
+      message: details.message,
+      code: details.code,
+      details: details.details,
+      hint: details.hint,
+    };
+  }
+
+  return {
+    message: typeof error === 'string' ? error : 'حدث خطأ غير معروف',
+  };
+};
 
 const formatCounter = (value: number): string => {
   if (value === 0) return '0';
+
   return value > 999
     ? `${(value / 1000).toFixed(1).replace(/\.0$/, '')}K`
     : String(value);
@@ -42,6 +78,7 @@ const countComments = (items: CommentWithDetails[]): number =>
 
 const buildInitials = (fullName?: string | null): string => {
   const source = (fullName ?? '').trim();
+
   if (!source) return 'آ';
 
   const initials = source
@@ -59,6 +96,7 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   currentUserId,
   isOpen,
   onClose,
+  initialCommentsCount = 0,
 }) => {
   const [comments, setComments] = useState<CommentWithDetails[]>([]);
   const [content, setContent] = useState('');
@@ -68,9 +106,14 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   const [loading, setLoading] = useState(false);
   const [commentsError, setCommentsError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [pendingReactionIds, setPendingReactionIds] = useState<Record<string, boolean>>({});
-  const [pendingDeleteIds, setPendingDeleteIds] = useState<Record<string, boolean>>({});
+  const [pendingReactionIds, setPendingReactionIds] = useState<
+    Record<string, boolean>
+  >({});
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<
+    Record<string, boolean>
+  >({});
   const [showStickerPicker, setShowStickerPicker] = useState(false);
+
   const commentIdsRef = useRef<Set<string>>(new Set());
 
   const [currentUser, setCurrentUser] = useState<{
@@ -82,17 +125,20 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
 
-  const loadComments = useCallback(async () => {
+  // إزالة الاعتمادية الحركية لتجنب الحلقة اللانهائية
+  const loadComments = useCallback(async (showLoadingSpinner = true) => {
     if (!postId) return;
 
-    setLoading(true);
+    if (showLoadingSpinner) {
+      setLoading(true);
+    }
     setCommentsError(null);
 
     try {
       const data = await fetchCommentsWithReplies(postId, currentUserId);
       setComments(data);
-    } catch (error) {
-      console.error('Error fetching comments:', error);
+    } catch (error: unknown) {
+      console.error('Error fetching comments:', getErrorDetails(error));
       setCommentsError('تعذر تحميل التعليقات من قاعدة البيانات');
     } finally {
       setLoading(false);
@@ -105,7 +151,10 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
     const visit = (items: CommentWithDetails[]) => {
       items.forEach((item) => {
         ids.add(item.id);
-        if (item.replies) visit(item.replies);
+
+        if (item.replies) {
+          visit(item.replies);
+        }
       });
     };
 
@@ -116,6 +165,8 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   useEffect(() => {
     if (!isOpen || !currentUserId) return;
 
+    let cancelled = false;
+
     void (async () => {
       const { data, error } = await supabase
         .from('profiles')
@@ -123,23 +174,42 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
         .eq('id', currentUserId)
         .maybeSingle();
 
+      if (cancelled) return;
+
       if (error) {
-        console.error('Error fetching comment composer profile:', error);
+        console.error(
+          'Error fetching comment composer profile:',
+          getErrorDetails(error),
+        );
         return;
       }
 
-      if (data) setCurrentUser(data as typeof currentUser);
-    })().catch((error: unknown) =>
-      console.error('Error fetching comment profile:', error),
-    );
+      if (data) {
+        setCurrentUser(data as typeof currentUser);
+      }
+    })().catch((error: unknown) => {
+      if (!cancelled) {
+        console.error(
+          'Error fetching comment profile:',
+          getErrorDetails(error),
+        );
+      }
+    });
 
-    void loadComments();
-  }, [isOpen, postId, currentUserId, loadComments]);
+    void loadComments(initialCommentsCount > 0);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, postId, currentUserId, loadComments, initialCommentsCount]);
 
   useEffect(() => {
     if (!isOpen) return;
 
-    const refreshForReaction = (payload: { new?: unknown; old?: unknown }) => {
+    const refreshForReaction = (payload: {
+      new?: unknown;
+      old?: unknown;
+    }) => {
       const row = (payload.new ?? payload.old ?? {}) as {
         comment_id?: string;
       };
@@ -148,7 +218,7 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
         row.comment_id &&
         commentIdsRef.current.has(String(row.comment_id))
       ) {
-        void loadComments();
+        void loadComments(false);
       }
     };
 
@@ -163,7 +233,7 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
           filter: `post_id=eq.${postId}`,
         },
         () => {
-          void loadComments();
+          void loadComments(false);
         },
       )
       .on(
@@ -186,7 +256,10 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
       )
       .subscribe((status, error) => {
         if (error) {
-          console.error('Comments realtime subscription error:', error);
+          console.error(
+            'Comments realtime subscription error:',
+            getErrorDetails(error),
+          );
         }
 
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
@@ -212,21 +285,23 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   }, [selectedImage]);
 
   useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = '0px';
-      textareaRef.current.style.height =
-        `${Math.min(textareaRef.current.scrollHeight, 130)}px`;
-    }
+    if (!textareaRef.current) return;
+
+    textareaRef.current.style.height = '0px';
+    textareaRef.current.style.height =
+      `${Math.min(textareaRef.current.scrollHeight, 130)}px`;
   }, [content]);
 
-  const totalComments = useMemo(
-    () => countComments(comments),
-    [comments],
-  );
+  const totalComments = useMemo(() => {
+    const activeTreeCount = countComments(comments);
+    if (activeTreeCount > 0) return activeTreeCount;
+    return initialCommentsCount;
+  }, [comments, initialCommentsCount]);
 
   const insertMention = () => {
     if (replyingTo) {
       const mention = `@${replyingTo.profiles?.username || 'user'} `;
+
       setContent((prev) => `${prev}${prev.trim() ? ' ' : ''}${mention}`);
     } else {
       setContent((prev) => `${prev}${prev.trim() ? ' ' : ''}@`);
@@ -239,28 +314,29 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
     setContent(
       (prev) => `${prev}${prev && !prev.endsWith(' ') ? ' ' : ''}${sticker}`,
     );
+
     setShowStickerPicker(false);
     window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
 
-  // حفظ التعليق دون طلب SELECT بعد INSERT؛ هذا يتجنب فشل الحفظ
-  // عندما تسمح سياسة INSERT بالإضافة لكن تمنع سياسة SELECT قراءة الصف.
   const handleSubmit = async () => {
     const nextContent = content.trim();
 
     if (submitting) return;
-
     if (!nextContent && !selectedImage) return;
 
     if (!postId?.trim()) {
       toast.error('تعذر تحديد المنشور الذي تريد التعليق عليه');
-      console.error('Cannot submit comment: postId is empty');
       return;
     }
 
     if (!currentUserId?.trim()) {
       toast.error('تعذر تحديد حسابك. سجّل الدخول ثم حاول مرة أخرى.');
-      console.error('Cannot submit comment: currentUserId is empty');
+      return;
+    }
+
+    if (nextContent.length > 2000) {
+      toast.error('التعليق طويل جدًا؛ الحد الأقصى 2000 حرف');
       return;
     }
 
@@ -284,46 +360,27 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
         }
       }
 
-      const payload = {
+      const payload: Record<string, string | null> = {
         post_id: postId,
         user_id: currentUserId,
         content: nextContent,
-        image_url: uploadedImage?.publicUrl ?? null,
         parent_id: replyingTo?.id ?? null,
       };
 
-      console.info('Submitting comment:', {
-        post_id: payload.post_id,
-        user_id: payload.user_id,
-        has_content: Boolean(payload.content),
-        has_image: Boolean(payload.image_url),
-        parent_id: payload.parent_id,
-      });
+      if (uploadedImage?.publicUrl) {
+        payload.image_url = uploadedImage.publicUrl;
+      }
 
-      // لا نستخدم .select().single() هنا.
-      // المطلوب أولاً معرفة هل INSERT نجح أم رفضته قاعدة البيانات.
       const { error: insertError } = await supabase
         .from('comments')
         .insert(payload);
 
-      if (insertError) {
-        console.error('Supabase comment INSERT failed:', {
-          message: insertError.message,
-          code: insertError.code,
-          details: insertError.details,
-          hint: insertError.hint,
-          postId,
-          currentUserId,
-        });
+      if (insertError) throw insertError;
 
-        throw insertError;
-      }
-
-      // بمجرد نجاح INSERT لا نعتبر التعليق فاشلاً بسبب إشعار أو تحديث لاحق.
       commentSaved = true;
 
       if (replyingTo && replyingTo.user_id !== currentUserId) {
-        const { error: notificationError } = await supabase
+        void supabase
           .from('notifications')
           .insert({
             user_id: replyingTo.user_id,
@@ -331,15 +388,6 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
             type: 'reply',
             comment_id: replyingTo.id,
           });
-
-        if (notificationError) {
-          console.error('Could not create reply notification:', {
-            message: notificationError.message,
-            code: notificationError.code,
-            details: notificationError.details,
-            hint: notificationError.hint,
-          });
-        }
       }
 
       setContent('');
@@ -350,62 +398,19 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
 
       toast.success('تم حفظ التعليق');
 
-      // فشل التحديث بعد الحفظ لا يعني أن التعليق لم يُحفظ.
-      await loadComments();
+      await loadComments(false);
     } catch (err: unknown) {
-      const error = err as {
-        message?: string;
-        code?: string;
-        details?: string;
-        hint?: string;
-      };
+      const error = getErrorDetails(err);
 
-      console.error('Error posting comment:', {
-        message: error?.message ?? String(err),
-        code: error?.code,
-        details: error?.details,
-        hint: error?.hint,
-      });
-
-      // لا نحذف الصورة إذا كان التعليق قد حُفظ بالفعل.
       if (!commentSaved && uploadedImage?.path) {
-        const { error: cleanupError } = await supabase.storage
-          .from(storageBucket)
-          .remove([uploadedImage.path]);
-
-        if (cleanupError) {
-          console.error('Could not remove the unused comment image:', {
-            message: cleanupError.message,
-            details: cleanupError,
-          });
-        }
+        void supabase.storage.from(storageBucket).remove([uploadedImage.path]);
       }
 
       if (commentSaved) {
-        toast.warning(
-          'تم حفظ التعليق، لكن تعذر تحديث القائمة. أعد فتح التعليقات للتحقق.',
-        );
-        void loadComments();
-      } else if (error?.code === '42501') {
-        toast.error(
-          'رفضت صلاحيات قاعدة البيانات إضافة التعليق. تحقق من سياسة INSERT في Supabase.',
-        );
-      } else if (error?.code === '23503') {
-        toast.error(
-          'تعذر الحفظ لأن المنشور أو المستخدم أو التعليق الأصلي غير موجود في قاعدة البيانات.',
-        );
-      } else if (error?.code === '23502') {
-        toast.error(
-          'تعذر الحفظ: هناك حقل مطلوب مفقود في بيانات التعليق.',
-        );
-      } else if (error?.code === '42703' || error?.code === 'PGRST204') {
-        toast.error(
-          'تعذر الحفظ بسبب اختلاف أسماء أعمدة التعليقات عن مخطط قاعدة البيانات.',
-        );
+        toast.warning('تم حفظ التعليق، جارِ تحديث القائمة...');
+        void loadComments(false);
       } else {
-        toast.error(
-          `تعذر حفظ التعليق${error?.message ? `: ${error.message}` : '. تحقق من الاتصال ثم حاول مرة أخرى.'}`,
-        );
+        toast.error(`تعذر حفظ التعليق${error.message ? `: ${error.message}` : ''}`);
       }
     } finally {
       setSubmitting(false);
@@ -425,9 +430,8 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
 
     try {
       await update();
-      await loadComments();
-    } catch (error) {
-      console.error('Error updating comment reaction:', error);
+      await loadComments(false);
+    } catch (error: unknown) {
       toast.error('تعذر تحديث التفاعل');
     } finally {
       setPendingReactionIds((prev) => {
@@ -479,9 +483,8 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
       }
 
       toast.success('تم حذف التعليق');
-      await loadComments();
-    } catch (error) {
-      console.error('Error deleting comment:', error);
+      await loadComments(false);
+    } catch (error: unknown) {
       toast.error('تعذر حذف التعليق');
     } finally {
       setPendingDeleteIds((prev) => {
@@ -550,7 +553,7 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
               <span>{commentsError}</span>
               <button
                 type="button"
-                onClick={() => void loadComments()}
+                onClick={() => void loadComments(true)}
                 className="shrink-0 rounded-full px-3 py-1 text-xs font-semibold hover:bg-red-900/50"
               >
                 إعادة المحاولة
@@ -607,6 +610,7 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
                   @{replyingTo.profiles?.username || 'مستخدم'}
                 </strong>
               </span>
+
               <button
                 type="button"
                 onClick={() => setReplyingTo(null)}
@@ -625,6 +629,7 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
                 alt="معاينة الصورة المرفقة"
                 className="h-full w-full object-cover"
               />
+
               <button
                 type="button"
                 onClick={() => setSelectedImage(null)}
@@ -664,19 +669,28 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
                   role="group"
                   aria-label="اختيار ملصق"
                 >
-                  {['❤️', '🥰', '😂', '👏', '🙏', '✨', '🌷', '🤍', '🫶', '🎉'].map(
-                    (sticker) => (
-                      <button
-                        key={sticker}
-                        type="button"
-                        onClick={() => insertSticker(sticker)}
-                        className="flex h-9 w-9 items-center justify-center rounded-lg text-xl hover:bg-zinc-800"
-                        aria-label={`إضافة ${sticker}`}
-                      >
-                        {sticker}
-                      </button>
-                    ),
-                  )}
+                  {[
+                    '❤️',
+                    '🥰',
+                    '😂',
+                    '👏',
+                    '🙏',
+                    '✨',
+                    '🌷',
+                    '🤍',
+                    '🫶',
+                    '🎉',
+                  ].map((sticker) => (
+                    <button
+                      key={sticker}
+                      type="button"
+                      onClick={() => insertSticker(sticker)}
+                      className="flex h-9 w-9 items-center justify-center rounded-lg text-xl hover:bg-zinc-800"
+                      aria-label={`إضافة ${sticker}`}
+                    >
+                      {sticker}
+                    </button>
+                  ))}
                 </div>
               )}
 

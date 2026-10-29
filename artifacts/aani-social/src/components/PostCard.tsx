@@ -1,13 +1,14 @@
-import React, { useState } from 'react';
-import { Heart, MessageCircle } from 'lucide-react';
+import React from 'react';
+import { Bookmark, Heart, MessageCircle, Repeat2 } from 'lucide-react';
 
+import { usePostInteractions } from '../lib/interactions';
 import type { Post } from '../lib/types';
 
 export interface PostCardProps {
   post: Post;
   currentUserId: string;
   onRefresh?: () => void;
-  onOpenComments?: (postId: string) => void;
+  onOpenComments?: (postId: string, initialCount?: number) => void;
 }
 
 export default function PostCard({
@@ -16,68 +17,144 @@ export default function PostCard({
   onRefresh,
   onOpenComments,
 }: PostCardProps) {
-  const [liked, setLiked] = useState(post.liked_by_me ?? (post.likes || []).some((like) => like.user_id === currentUserId));
-  const [likesCount, setLikesCount] = useState(post.likes_count ?? post.likes?.length ?? 0);
-  const [isAnimating, setIsAnimating] = useState(false);
-  const [isLikePending, setIsLikePending] = useState(false);
+  // 1. حماية من انهيار الشاشة إذا كانت بيانات المنشور فارغة
+  if (!post || !post.id) {
+    return null;
+  }
 
-  const toggleLike = async () => {
-    if (isLikePending) return;
+  // 2. استدعاء آمن مع قيم افتراضية لمنع الشاشة البيضاء
+  const interactions = usePostInteractions ? usePostInteractions(post, currentUserId || '') : null;
 
-    const prevLiked = liked;
-    const prevCount = likesCount;
-    const nextLiked = !prevLiked;
+  const likes = interactions?.likes ?? post.likes_count ?? post.likes?.length ?? 0;
+  const comments = interactions?.comments ?? post.comments_count ?? 0;
+  const reposts = interactions?.reposts ?? post.reposts_count ?? 0;
+  const liked = interactions?.liked ?? (post.likes || []).some((l) => l.user_id === currentUserId);
+  const bookmarked = interactions?.bookmarked ?? false;
+  const reposted = interactions?.reposted ?? false;
+  const pending = interactions?.pending ?? false;
 
-    setIsLikePending(true);
-    setLiked(nextLiked);
-    setLikesCount(prevCount + (nextLiked ? 1 : -1));
-    setIsAnimating(true);
-    setTimeout(() => setIsAnimating(false), 450);
-
-    setIsLikePending(false);
-  };
+  const toggleLike = interactions?.toggleLike || (() => {});
+  const toggleBookmark = interactions?.toggleBookmark || (() => {});
+  const toggleRepost = interactions?.toggleRepost || (() => {});
 
   const handleOpenComments = () => {
     if (onOpenComments) {
-      onOpenComments(post.id);
+      onOpenComments(post.id, comments);
     }
   };
 
+  // 3. تنسيق تاريخ آمن لا يسبب خطأ
+  const formattedDate = post.created_at
+    ? new Date(post.created_at).toLocaleDateString('ar-EG')
+    : '';
+
   return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4 text-white">
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4 text-white shadow-sm" dir="rtl">
+      {/* رأس المنشور */}
       <div className="flex items-center justify-between">
-        <div className="font-semibold">{post.author?.full_name || 'مستخدم'}</div>
-        <div className="text-xs text-zinc-400">
-          {post.created_at ? new Date(post.created_at).toLocaleDateString() : ''}
+        <div className="flex items-center gap-3">
+          {post.author?.avatar_url ? (
+            <img
+              src={post.author.avatar_url}
+              alt={post.author.full_name || 'مستخدم'}
+              className="h-10 w-10 rounded-full object-cover ring-1 ring-zinc-700"
+            />
+          ) : (
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-violet-600 text-sm font-bold text-white">
+              {post.author?.full_name?.[0]?.toUpperCase() || 'آ'}
+            </div>
+          )}
+          <div>
+            <div className="font-semibold text-zinc-100">
+              {post.author?.full_name || 'مستخدم'}
+            </div>
+            {post.author?.username && (
+              <div className="text-xs text-zinc-400">@{post.author.username}</div>
+            )}
+          </div>
         </div>
+
+        <div className="text-xs text-zinc-400">{formattedDate}</div>
       </div>
 
-      {post.content && <p className="mt-3 text-sm leading-6 text-zinc-200">{post.content}</p>}
+      {/* محتوى المنشور */}
+      {post.content && (
+        <p className="mt-3 text-sm leading-6 text-zinc-200 whitespace-pre-line">
+          {post.content}
+        </p>
+      )}
 
-      <div className="mt-4 flex items-center gap-3 text-zinc-300">
+      {/* مرفق الصورة */}
+      {post.media_url && (
+        <div className="mt-3 overflow-hidden rounded-xl border border-zinc-800">
+          <img
+            src={post.media_url}
+            alt="مرفق المنشور"
+            className="max-h-96 w-full object-cover"
+          />
+        </div>
+      )}
+
+      {/* شريط الأزرار */}
+      <div className="mt-4 flex items-center justify-between border-t border-zinc-800/60 pt-3 text-zinc-300">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <button
+            type="button"
+            onClick={toggleLike}
+            disabled={pending}
+            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+              liked
+                ? 'bg-pink-500/15 text-pink-400 hover:bg-pink-500/20'
+                : 'bg-zinc-800/80 text-zinc-300 hover:bg-zinc-800 hover:text-white'
+            }`}
+          >
+            <Heart
+              size={16}
+              fill={liked ? 'currentColor' : 'none'}
+              className={liked ? 'text-pink-500' : ''}
+            />
+            <span>{likes}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleOpenComments}
+            className="inline-flex items-center gap-1.5 rounded-full bg-zinc-800/80 px-3 py-1.5 text-xs font-medium text-zinc-300 transition hover:bg-zinc-800 hover:text-white"
+          >
+            <MessageCircle size={16} />
+            <span>{comments}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={toggleRepost}
+            disabled={pending}
+            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+              reposted
+                ? 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/20'
+                : 'bg-zinc-800/80 text-zinc-300 hover:bg-zinc-800 hover:text-white'
+            }`}
+          >
+            <Repeat2 size={16} className={reposted ? 'text-emerald-400' : ''} />
+            <span>{reposts}</span>
+          </button>
+        </div>
+
         <button
           type="button"
-          onClick={toggleLike}
-          disabled={isLikePending}
-          className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs transition ${
-            liked ? 'bg-pink-500/15 text-pink-300' : 'bg-zinc-800 text-zinc-300'
+          onClick={toggleBookmark}
+          disabled={pending}
+          className={`inline-flex items-center rounded-full p-2 text-xs font-medium transition ${
+            bookmarked
+              ? 'bg-amber-500/15 text-amber-400 hover:bg-amber-500/20'
+              : 'bg-zinc-800/80 text-zinc-400 hover:bg-zinc-800 hover:text-white'
           }`}
         >
-          <Heart
-            size={15}
-            fill={liked ? 'currentColor' : 'none'}
-            className={isAnimating ? 'animate-pulse' : ''}
+          <Bookmark
+            size={16}
+            fill={bookmarked ? 'currentColor' : 'none'}
+            className={bookmarked ? 'text-amber-400' : ''}
           />
-          {likesCount}
-        </button>
-
-        <button
-          type="button"
-          onClick={handleOpenComments}
-          className="inline-flex items-center gap-2 rounded-full bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300 transition hover:bg-zinc-700"
-        >
-          <MessageCircle size={15} />
-          {post.comments_count ?? 0}
         </button>
       </div>
     </div>

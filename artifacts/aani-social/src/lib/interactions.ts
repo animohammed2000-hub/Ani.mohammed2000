@@ -1,4 +1,3 @@
-
 /**
  * Persistent interactions layer (likes, comments, reposts, shares, bookmarks, threaded comments).
  */
@@ -312,13 +311,9 @@ function isMissingRelation(error: unknown): boolean {
 /* Comment data helpers                                                */
 /* ------------------------------------------------------------------ */
 
-/**
- * جلب ملفات أصحاب التعليقات بشكل منفصل.
- * فشل جلب الملفات الشخصية لا يمنع إظهار نصوص التعليقات.
- */
 async function fetchCommentProfiles(
   userIds: string[],
-): Promise<Map<string, Profile>> {
+): Promise> {
   const profilesById = new Map<string, Profile>();
   const ids = Array.from(new Set(userIds.filter(Boolean)));
 
@@ -345,9 +340,6 @@ async function fetchCommentProfiles(
   return profilesById;
 }
 
-/**
- * إرفاق بيانات صاحب التعليق بعد جلب التعليقات من دون علاقة profiles.
- */
 async function attachCommentAuthors(
   rows: RawRow[],
 ): Promise<PostCommentRow[]> {
@@ -419,7 +411,7 @@ function optionalBool(value: unknown): boolean | undefined {
 async function fetchSummaries(
   postIds: string[],
   userId: string,
-): Promise<Map<string, Summary> | null> {
+): Promise | null> {
   if (!supabaseConfigured || postIds.length === 0) return null;
 
   try {
@@ -452,16 +444,17 @@ async function fetchSummaries(
 async function fetchFallbackSummaries(
   postIds: string[],
   userId: string,
-): Promise<Map<string, Summary>> {
+): Promise> {
   const summaries = new Map<string, Summary>();
   postIds.forEach((id) => summaries.set(id, { postId: id }));
 
   if (!supabaseConfigured || postIds.length === 0) return summaries;
 
-  const [likes, comments, reposts, bookmarks, shares, rows] = await Promise.all([
+  const [likes, comments, reposts, savedPosts, bookmarks, shares, rows] = await Promise.all([
     supabase.from("likes").select("post_id,user_id").in("post_id", postIds).limit(20000),
     supabase.from("comments").select("post_id").in("post_id", postIds).limit(20000),
     supabase.from("reposts").select("post_id,user_id").in("post_id", postIds).limit(20000),
+    supabase.from("saved_posts").select("post_id,user_id").in("post_id", postIds).limit(20000),
     supabase.from("bookmarks").select("post_id,user_id").in("post_id", postIds).limit(20000),
     supabase.from("post_shares").select("post_id,user_id").in("post_id", postIds).limit(20000),
     supabase.from("posts").select("*").in("id", postIds),
@@ -469,6 +462,7 @@ async function fetchFallbackSummaries(
 
   const likeCounts = countByPost(likes.data);
   const commentCounts = countByPost(comments.data);
+  const repostCounts = countByPost(reposts.data);
 
   const counters = new Map<string, RawRow>();
   ((rows.data ?? []) as RawRow[]).forEach((row) => {
@@ -476,7 +470,7 @@ async function fetchFallbackSummaries(
   });
 
   const likeRows = (likes.data ?? []) as RawRow[];
-  const bookmarkRows = (bookmarks.data ?? []) as RawRow[];
+  const savedRows = [...((savedPosts.data ?? []) as RawRow[]), ...((bookmarks.data ?? []) as RawRow[])];
   const repostRows = (reposts.data ?? []) as RawRow[];
   const shareRows = (shares.data ?? []) as RawRow[];
 
@@ -489,14 +483,13 @@ async function fetchFallbackSummaries(
       row?.comments_count,
       commentCounts.get(postId) ?? 0,
     );
-    summary.reposts = toNumber(row?.reposts_count, 0);
+    summary.reposts = toNumber(row?.reposts_count, repostCounts.get(postId) ?? 0);
     summary.shares = toNumber(row?.shares_count, 0);
     summary.liked = likeRows.some(
       (like) => like.post_id === postId && like.user_id === userId,
     );
-    summary.bookmarked = bookmarkRows.some(
-      (bookmark) =>
-        bookmark.post_id === postId && bookmark.user_id === userId,
+    summary.bookmarked = savedRows.some(
+      (saved) => saved.post_id === postId && saved.user_id === userId,
     );
     summary.reposted = repostRows.some(
       (repost) => repost.post_id === postId && repost.user_id === userId,
@@ -722,9 +715,17 @@ export async function toggleLike(post: Post, userId: string): Promise<void> {
   await hydratePostIds([post.id], userId, { force: true });
 }
 
-export async function toggleBookmark(post: Post, userId: string): Promise<void> {
+export async function toggleBookmark(
+  postOrId: Post | string,
+  userId: string,
+  overrideState?: boolean
+): Promise<void> {
+  const post: Post = typeof postOrId === "string"
+    ? ({ id: postOrId } as Post)
+    : postOrId;
+
   const before = readInteractionState(post, userId);
-  const bookmarked = !before.bookmarked;
+  const bookmarked = overrideState !== undefined ? !overrideState : !before.bookmarked;
 
   markPending(post.id, userId, 1);
   patchCache(post.id, userId, { bookmarked });
@@ -736,12 +737,24 @@ export async function toggleBookmark(post: Post, userId: string): Promise<void> 
       return;
     }
 
-    const { error } = bookmarked
-      ? await supabase.from("bookmarks").insert({ post_id: post.id, user_id: userId })
-      : await supabase.from("bookmarks").delete().eq("post_id", post.id).eq("user_id", userId);
+    let errorToReport: any = null;
 
-    if (error && error.code !== "23505") {
-      if (isMissingRelation(error)) {
+    if (bookmarked) {
+      const { error: savedError } = await supabase.from("saved_posts").insert({ post_id: post.id, user_id: userId });
+      if (savedError && isMissingRelation(savedError)) {
+        const { error: bookmarkError } = await supabase.from("bookmarks").insert({ post_id: post.id, user_id: userId });
+        errorToReport = bookmarkError;
+      } else {
+        errorToReport = savedError;
+      }
+    } else {
+      const { error: savedError } = await supabase.from("saved_posts").delete().eq("post_id", post.id).eq("user_id", userId);
+      const { error: bookmarkError } = await supabase.from("bookmarks").delete().eq("post_id", post.id).eq("user_id", userId);
+      errorToReport = savedError && bookmarkError ? savedError : null;
+    }
+
+    if (errorToReport && errorToReport.code !== "23505") {
+      if (isMissingRelation(errorToReport)) {
         writeLocalFlag(userId, post.id, { bookmarked });
         toast.warning("تم حفظ المنشور على هذا الجهاز.");
         return;
@@ -761,9 +774,19 @@ export async function toggleBookmark(post: Post, userId: string): Promise<void> 
   await hydratePostIds([post.id], userId, { force: true });
 }
 
-export async function toggleRepost(post: Post, userId: string): Promise<void> {
+export const toggleSavePost = toggleBookmark;
+
+export async function toggleRepost(
+  postOrId: Post | string,
+  userId: string,
+  overrideState?: boolean
+): Promise<void> {
+  const post: Post = typeof postOrId === "string"
+    ? ({ id: postOrId } as Post)
+    : postOrId;
+
   const before = readInteractionState(post, userId);
-  const reposted = !before.reposted;
+  const reposted = overrideState !== undefined ? !overrideState : !before.reposted;
 
   markPending(post.id, userId, 1);
   patchCache(post.id, userId, {
@@ -814,30 +837,6 @@ export function buildPostUrl(postId: string): string {
 
   const base = (import.meta.env.BASE_URL || "/").replace(/\/+$/, "");
   return `${window.location.origin}${base}/post/${postId}`;
-}
-
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {}
-
-  try {
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    const copied = document.execCommand("copy");
-    document.body.removeChild(textarea);
-    return copied;
-  } catch {
-    return false;
-  }
 }
 
 export function postShareUrl(postId: string): string {
@@ -974,10 +973,6 @@ export async function fetchCommentsWithReplies(
     throw new Error("الاتصال بقاعدة البيانات غير متاح");
   }
 
-  /*
-   * الخطوة الأولى: جلب التعليقات نفسها فقط.
-   * لا نعتمد على علاقة profiles داخل استعلام comments.
-   */
   const { data: comments, error } = await supabase
     .from("comments")
     .select("*")
@@ -996,20 +991,12 @@ export async function fetchCommentsWithReplies(
   const rawComments = comments as RawRow[];
   if (rawComments.length === 0) return [];
 
-  /*
-   * الخطوة الثانية: جلب ملفات أصحاب التعليقات باستعلام مستقل.
-   * فشل هذا الاستعلام لا يمنع ظهور نصوص التعليقات.
-   */
   const userIds = rawComments
     .map((comment) => String(comment.user_id ?? ""))
     .filter(Boolean);
 
   const profilesById = await fetchCommentProfiles(userIds);
 
-  /*
-   * الخطوة الثالثة: جلب الإعجابات وعدم الإعجاب بشكل اختياري.
-   * أي خطأ في هذين الجدولين لا يُسقط تحميل التعليقات.
-   */
   const commentIds = rawComments
     .map((comment) => String(comment.id ?? ""))
     .filter(Boolean);
@@ -1031,16 +1018,6 @@ export async function fetchCommentsWithReplies(
 
     if (likesResult.status === "fulfilled" && !likesResult.value.error) {
       likes = (likesResult.value.data ?? []) as typeof likes;
-    } else {
-      const error =
-        likesResult.status === "fulfilled"
-          ? likesResult.value.error
-          : likesResult.reason;
-
-      console.warn(
-        "[comments] تعذر جلب إعجابات التعليقات؛ سيستمر عرض التعليقات:",
-        error,
-      );
     }
 
     if (
@@ -1048,16 +1025,6 @@ export async function fetchCommentsWithReplies(
       !dislikesResult.value.error
     ) {
       dislikes = (dislikesResult.value.data ?? []) as typeof dislikes;
-    } else {
-      const error =
-        dislikesResult.status === "fulfilled"
-          ? dislikesResult.value.error
-          : dislikesResult.reason;
-
-      console.warn(
-        "[comments] تعذر جلب عدم إعجاب التعليقات؛ سيستمر عرض التعليقات:",
-        error,
-      );
     }
   }
 
@@ -1127,11 +1094,6 @@ export async function fetchCommentsWithReplies(
     };
   });
 
-  /*
-   * بناء الشجرة على مرحلتين:
-   * 1. إنشاء خريطة لجميع التعليقات.
-   * 2. ربط كل رد بأبيه بعد التأكد من وجود جميع العقد.
-   */
   const commentMap = new Map<string, CommentWithDetails>();
 
   formatted.forEach((comment) => {
@@ -1283,6 +1245,51 @@ export async function translateText(
   }
 }
 
+export const fetchSavedPosts = async (userId: string): Promise<Post[]> => {
+  if (!userId || !supabaseConfigured) return [];
+
+  try {
+    let ids: string[] = [];
+
+    const { data: savedData, error: savedError } = await supabase
+      .from("saved_posts")
+      .select("post_id, created_at")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+
+    if (!savedError && savedData && savedData.length > 0) {
+      ids = (savedData as RawRow[]).map((row) => String(row.post_id));
+    } else {
+      const { data: bookmarkData } = await supabase
+        .from("bookmarks")
+        .select("post_id, created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (bookmarkData) {
+        ids = (bookmarkData as RawRow[]).map((row) => String(row.post_id));
+      }
+    }
+
+    if (ids.length === 0) return [];
+
+    const { data: rows, error: postsError } = await supabase
+      .from("posts")
+      .select("*")
+      .in("id", ids);
+
+    if (postsError || !rows) return [];
+
+    const decorated = await decoratePosts(rows as RawRow[], userId);
+    const order = new Map(ids.map((id, index) => [id, index]));
+
+    decorated.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+    return decorated;
+  } catch {
+    return [];
+  }
+};
+
 /* ------------------------------------------------------------------ */
 /* Realtime Subscription & Hooks                                       */
 /* ------------------------------------------------------------------ */
@@ -1360,6 +1367,7 @@ function buildChannel(userId: string): RealtimeChannel {
       "likes",
       "comments",
       "reposts",
+      "saved_posts",
       "bookmarks",
       "post_shares",
       "comment_likes",
@@ -1522,10 +1530,6 @@ function normalizeComment(row: RawRow): PostCommentRow {
   };
 }
 
-/*
- * لا نستخدم profiles(...) داخل استعلام comments.
- * بيانات صاحب التعليق تُجلب بشكل مستقل بواسطة attachCommentAuthors.
- */
 const COMMENT_SELECT =
   "id, post_id, user_id, parent_id, content, image_url, created_at";
 
@@ -1754,61 +1758,8 @@ export function useSavedPosts(userId: string): SavedPostsState {
     setError(null);
 
     try {
-      let ids: string[] = [];
-
-      if (supabaseConfigured) {
-        const { data, error: bookmarksError } = await supabase
-          .from("bookmarks")
-          .select("post_id, created_at")
-          .eq("user_id", userId)
-          .order("created_at", { ascending: false });
-
-        if (bookmarksError) {
-          if (!isMissingRelation(bookmarksError)) {
-            setError("تعذر تحميل المحفوظات");
-          }
-        } else {
-          ids = ((data ?? []) as RawRow[]).map((row) =>
-            String(row.post_id),
-          );
-        }
-      }
-
-      const local = readLocalFlags(userId);
-
-      Object.entries(local).forEach(([postId, flags]) => {
-        if (flags.bookmarked && !ids.includes(postId)) ids.push(postId);
-      });
-
-      if (ids.length === 0) {
-        setPosts([]);
-        return;
-      }
-
-      if (!supabaseConfigured) {
-        setPosts([]);
-        return;
-      }
-
-      const { data: rows, error: postsError } = await supabase
-        .from("posts")
-        .select("*")
-        .in("id", ids);
-
-      if (postsError) {
-        setError("تعذر تحميل المنشورات المحفوظة");
-        setPosts([]);
-        return;
-      }
-
-      const decorated = await decoratePosts((rows ?? []) as RawRow[], userId);
-      const order = new Map(ids.map((id, index) => [id, index]));
-
-      decorated.sort(
-        (a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0),
-      );
-
-      setPosts(decorated);
+      const savedList = await fetchSavedPosts(userId);
+      setPosts(savedList);
     } catch {
       setError("تعذر تحميل المحفوظات");
     } finally {
