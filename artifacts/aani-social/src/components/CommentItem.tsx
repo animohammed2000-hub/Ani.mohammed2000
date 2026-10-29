@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Heart, Reply, Sparkles, X } from 'lucide-react';
 import type { CommentWithDetails } from '../lib/interactions';
@@ -16,7 +17,6 @@ const formatRelativeTime = (value: string): string => {
 
   const diffMs = Date.now() - date.getTime();
   const minutes = Math.max(1, Math.floor(diffMs / 60000));
-
   if (minutes < 60) return `${minutes} د`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours} س`;
@@ -40,6 +40,48 @@ const buildInitials = (fullName?: string | null): string => {
   return initials || 'آ';
 };
 
+/**
+ * ترجمة نص التعليق إلى العربية.
+ * لا تغيّر نص التعليق الأصلي ولا تحفظ الترجمة في قاعدة البيانات.
+ */
+async function translateCommentToArabic(text: string): Promise<string> {
+  const sourceText = text.trim();
+
+  if (!sourceText) {
+    throw new Error('لا يوجد نص لترجمته');
+  }
+
+  const url = new URL('https://api.mymemory.translated.net/get');
+  url.searchParams.set('q', sourceText);
+  url.searchParams.set('langpair', 'autodetect|ar');
+
+  const response = await fetch(url.toString());
+
+  if (!response.ok) {
+    throw new Error('تعذر الاتصال بخدمة الترجمة');
+  }
+
+  const data: {
+    responseStatus?: number;
+    responseDetails?: string;
+    responseData?: {
+      translatedText?: string;
+    };
+  } = await response.json();
+
+  const translated = data.responseData?.translatedText?.trim();
+
+  if (
+    data.responseStatus !== 200 ||
+    !translated ||
+    translated.toLowerCase() === 'error'
+  ) {
+    throw new Error(data.responseDetails || 'تعذرت ترجمة التعليق');
+  }
+
+  return translated;
+}
+
 export const CommentItem: React.FC<CommentItemProps> = ({
   comment,
   depth = 0,
@@ -47,6 +89,9 @@ export const CommentItem: React.FC<CommentItemProps> = ({
   onToggleLike,
 }) => {
   const [showTranslated, setShowTranslated] = useState(false);
+  const [translatedText, setTranslatedText] = useState<string | null>(null);
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [translationError, setTranslationError] = useState<string | null>(null);
   const [showReplies, setShowReplies] = useState(true);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
 
@@ -54,6 +99,40 @@ export const CommentItem: React.FC<CommentItemProps> = ({
   const author = comment.profiles;
   const displayName = author?.full_name || 'مستخدم آني';
   const username = author?.username ? `@${author.username}` : '@user';
+
+  const handleTranslation = async () => {
+    if (isTranslating) return;
+
+    if (showTranslated) {
+      setShowTranslated(false);
+      setTranslationError(null);
+      return;
+    }
+
+    if (translatedText !== null) {
+      setShowTranslated(true);
+      setTranslationError(null);
+      return;
+    }
+
+    setIsTranslating(true);
+    setTranslationError(null);
+
+    try {
+      const result = await translateCommentToArabic(comment.content);
+      setTranslatedText(result);
+      setShowTranslated(true);
+    } catch (error) {
+      console.error('Comment translation failed:', error);
+      setTranslationError(
+        error instanceof Error
+          ? error.message
+          : 'تعذرت الترجمة، حاول مرة أخرى',
+      );
+    } finally {
+      setIsTranslating(false);
+    }
+  };
 
   return (
     <div className="relative">
@@ -82,19 +161,34 @@ export const CommentItem: React.FC<CommentItemProps> = ({
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="truncate text-sm font-bold text-white">{displayName}</p>
+              <p className="truncate text-sm font-bold text-white">
+                {displayName}
+              </p>
               <p className="text-[11px] text-zinc-400" dir="ltr">
                 {username}
               </p>
             </div>
+
             <span className="shrink-0 text-[10px] text-zinc-500">
               {formatRelativeTime(comment.created_at)}
             </span>
           </div>
 
           <div className="mt-2 text-sm leading-7 text-zinc-200" dir="rtl">
-            {comment.content}
+            {showTranslated && translatedText !== null
+              ? translatedText
+              : comment.content}
           </div>
+
+          {translationError && (
+            <p
+              role="status"
+              className="mt-2 text-xs text-amber-400"
+              dir="rtl"
+            >
+              {translationError}
+            </p>
+          )}
 
           {comment.image_url && (
             <button
@@ -120,7 +214,10 @@ export const CommentItem: React.FC<CommentItemProps> = ({
                   : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
               }`}
             >
-              <Heart size={14} fill={comment.is_liked ? 'currentColor' : 'none'} />
+              <Heart
+                size={14}
+                fill={comment.is_liked ? 'currentColor' : 'none'}
+              />
               {comment.likes_count ?? 0}
             </button>
 
@@ -135,11 +232,17 @@ export const CommentItem: React.FC<CommentItemProps> = ({
 
             <button
               type="button"
-              onClick={() => setShowTranslated((prev) => !prev)}
-              className="inline-flex items-center gap-1.5 rounded-full bg-zinc-800 px-2 py-1 text-zinc-300 transition hover:bg-zinc-700"
+              onClick={handleTranslation}
+              disabled={isTranslating}
+              aria-busy={isTranslating}
+              className="inline-flex items-center gap-1.5 rounded-full bg-zinc-800 px-2 py-1 text-zinc-300 transition hover:bg-zinc-700 disabled:cursor-wait disabled:opacity-60"
             >
               <Sparkles size={14} />
-              {showTranslated ? 'نص أصلي' : 'ترجمة'}
+              {isTranslating
+                ? 'جارٍ الترجمة...'
+                : showTranslated
+                  ? 'نص أصلي'
+                  : 'ترجمة'}
             </button>
           </div>
         </div>
@@ -181,9 +284,11 @@ export const CommentItem: React.FC<CommentItemProps> = ({
               type="button"
               onClick={() => setExpandedImage(null)}
               className="absolute right-3 top-3 z-10 rounded-full bg-black/70 p-2 text-white"
+              aria-label="إغلاق الصورة"
             >
               <X size={16} />
             </button>
+
             <img
               src={expandedImage}
               alt="صورة مكبرة"
