@@ -9,6 +9,7 @@
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:edge": "tsc -p supabase/functions/tsconfig.json",
+    "test": "tsx --test ./src/lib/reportSubmit.test.ts",
     "test:edge": "tsx --test ./supabase/functions/tests/gemini-edge.test.ts"
   },
   "devDependencies": {
