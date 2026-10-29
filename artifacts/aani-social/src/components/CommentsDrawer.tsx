@@ -1,3 +1,4 @@
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AtSign,
@@ -28,7 +29,9 @@ interface CommentsDrawerProps {
 
 const formatCounter = (value: number): string => {
   if (value === 0) return '0';
-  return value > 999 ? `${(value / 1000).toFixed(1).replace(/\.0$/, '')}K` : String(value);
+  return value > 999
+    ? `${(value / 1000).toFixed(1).replace(/\.0$/, '')}K`
+    : String(value);
 };
 
 const countComments = (items: CommentWithDetails[]): number =>
@@ -69,6 +72,7 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   const [pendingDeleteIds, setPendingDeleteIds] = useState<Record<string, boolean>>({});
   const [showStickerPicker, setShowStickerPicker] = useState(false);
   const commentIdsRef = useRef<Set<string>>(new Set());
+
   const [currentUser, setCurrentUser] = useState<{
     full_name: string;
     username: string;
@@ -80,8 +84,10 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
 
   const loadComments = useCallback(async () => {
     if (!postId) return;
+
     setLoading(true);
     setCommentsError(null);
+
     try {
       const data = await fetchCommentsWithReplies(postId, currentUserId);
       setComments(data);
@@ -95,12 +101,14 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
 
   useEffect(() => {
     const ids = new Set<string>();
+
     const visit = (items: CommentWithDetails[]) => {
       items.forEach((item) => {
         ids.add(item.id);
         if (item.replies) visit(item.replies);
       });
     };
+
     visit(comments);
     commentIdsRef.current = ids;
   }, [comments]);
@@ -114,10 +122,12 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
         .select('full_name, username, avatar_url')
         .eq('id', currentUserId)
         .maybeSingle();
+
       if (error) {
         console.error('Error fetching comment composer profile:', error);
         return;
       }
+
       if (data) setCurrentUser(data as typeof currentUser);
     })().catch((error: unknown) =>
       console.error('Error fetching comment profile:', error),
@@ -130,8 +140,14 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
     if (!isOpen) return;
 
     const refreshForReaction = (payload: { new?: unknown; old?: unknown }) => {
-      const row = (payload.new ?? payload.old ?? {}) as { comment_id?: string };
-      if (row.comment_id && commentIdsRef.current.has(String(row.comment_id))) {
+      const row = (payload.new ?? payload.old ?? {}) as {
+        comment_id?: string;
+      };
+
+      if (
+        row.comment_id &&
+        commentIdsRef.current.has(String(row.comment_id))
+      ) {
         void loadComments();
       }
     };
@@ -140,22 +156,43 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
       .channel(`comments_drawer_${postId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'comments', filter: `post_id=eq.${postId}` },
+        {
+          event: '*',
+          schema: 'public',
+          table: 'comments',
+          filter: `post_id=eq.${postId}`,
+        },
         () => {
           void loadComments();
         },
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'comment_likes' },
+        {
+          event: '*',
+          schema: 'public',
+          table: 'comment_likes',
+        },
         refreshForReaction,
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'comment_dislikes' },
+        {
+          event: '*',
+          schema: 'public',
+          table: 'comment_dislikes',
+        },
         refreshForReaction,
       )
-      .subscribe();
+      .subscribe((status, error) => {
+        if (error) {
+          console.error('Comments realtime subscription error:', error);
+        }
+
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error('Comments realtime channel status:', status);
+        }
+      });
 
     return () => {
       void supabase.removeChannel(channel);
@@ -177,13 +214,15 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = '0px';
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 130)}px`;
+      textareaRef.current.style.height =
+        `${Math.min(textareaRef.current.scrollHeight, 130)}px`;
     }
   }, [content]);
 
-  const totalComments = useMemo(() => {
-    return countComments(comments);
-  }, [comments]);
+  const totalComments = useMemo(
+    () => countComments(comments),
+    [comments],
+  );
 
   const insertMention = () => {
     if (replyingTo) {
@@ -197,48 +236,109 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   };
 
   const insertSticker = (sticker: string) => {
-    setContent((prev) => `${prev}${prev && !prev.endsWith(' ') ? ' ' : ''}${sticker}`);
+    setContent(
+      (prev) => `${prev}${prev && !prev.endsWith(' ') ? ' ' : ''}${sticker}`,
+    );
     setShowStickerPicker(false);
     window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
 
+  // حفظ التعليق دون طلب SELECT بعد INSERT؛ هذا يتجنب فشل الحفظ
+  // عندما تسمح سياسة INSERT بالإضافة لكن تمنع سياسة SELECT قراءة الصف.
   const handleSubmit = async () => {
     const nextContent = content.trim();
+
     if (submitting) return;
+
     if (!nextContent && !selectedImage) return;
 
+    if (!postId?.trim()) {
+      toast.error('تعذر تحديد المنشور الذي تريد التعليق عليه');
+      console.error('Cannot submit comment: postId is empty');
+      return;
+    }
+
+    if (!currentUserId?.trim()) {
+      toast.error('تعذر تحديد حسابك. سجّل الدخول ثم حاول مرة أخرى.');
+      console.error('Cannot submit comment: currentUserId is empty');
+      return;
+    }
+
     setSubmitting(true);
-    let uploadedImage: Awaited<ReturnType<typeof uploadCommentImage>> | null = null;
+
+    let uploadedImage: Awaited<
+      ReturnType<typeof uploadCommentImage>
+    > | null = null;
+
+    let commentSaved = false;
+
     try {
       if (selectedImage) {
-        uploadedImage = await uploadCommentImage(selectedImage, currentUserId);
+        uploadedImage = await uploadCommentImage(
+          selectedImage,
+          currentUserId,
+        );
+
+        if (!uploadedImage?.publicUrl) {
+          throw new Error('لم يتم الحصول على رابط الصورة بعد رفعها');
+        }
       }
 
       const payload = {
         post_id: postId,
         user_id: currentUserId,
-        content: nextContent || '',
+        content: nextContent,
         image_url: uploadedImage?.publicUrl ?? null,
         parent_id: replyingTo?.id ?? null,
       };
 
-      const { data, error } = await supabase
+      console.info('Submitting comment:', {
+        post_id: payload.post_id,
+        user_id: payload.user_id,
+        has_content: Boolean(payload.content),
+        has_image: Boolean(payload.image_url),
+        parent_id: payload.parent_id,
+      });
+
+      // لا نستخدم .select().single() هنا.
+      // المطلوب أولاً معرفة هل INSERT نجح أم رفضته قاعدة البيانات.
+      const { error: insertError } = await supabase
         .from('comments')
-        .insert(payload)
-        .select('id')
-        .single();
-      if (error) throw error;
-      if (!data?.id) throw new Error('لم يؤكد الخادم حفظ التعليق');
+        .insert(payload);
+
+      if (insertError) {
+        console.error('Supabase comment INSERT failed:', {
+          message: insertError.message,
+          code: insertError.code,
+          details: insertError.details,
+          hint: insertError.hint,
+          postId,
+          currentUserId,
+        });
+
+        throw insertError;
+      }
+
+      // بمجرد نجاح INSERT لا نعتبر التعليق فاشلاً بسبب إشعار أو تحديث لاحق.
+      commentSaved = true;
 
       if (replyingTo && replyingTo.user_id !== currentUserId) {
-        const { error: notificationError } = await supabase.from('notifications').insert({
-          user_id: replyingTo.user_id,
-          actor_id: currentUserId,
-          type: 'reply',
-          comment_id: replyingTo.id,
-        });
+        const { error: notificationError } = await supabase
+          .from('notifications')
+          .insert({
+            user_id: replyingTo.user_id,
+            actor_id: currentUserId,
+            type: 'reply',
+            comment_id: replyingTo.id,
+          });
+
         if (notificationError) {
-          console.error('Could not create reply notification:', notificationError);
+          console.error('Could not create reply notification:', {
+            message: notificationError.message,
+            code: notificationError.code,
+            details: notificationError.details,
+            hint: notificationError.hint,
+          });
         }
       }
 
@@ -247,27 +347,82 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
       setPreviewUrl(null);
       setReplyingTo(null);
       setShowStickerPicker(false);
+
       toast.success('تم حفظ التعليق');
+
+      // فشل التحديث بعد الحفظ لا يعني أن التعليق لم يُحفظ.
       await loadComments();
-    } catch (err) {
-      console.error('Error posting comment:', err);
-      if (uploadedImage) {
+    } catch (err: unknown) {
+      const error = err as {
+        message?: string;
+        code?: string;
+        details?: string;
+        hint?: string;
+      };
+
+      console.error('Error posting comment:', {
+        message: error?.message ?? String(err),
+        code: error?.code,
+        details: error?.details,
+        hint: error?.hint,
+      });
+
+      // لا نحذف الصورة إذا كان التعليق قد حُفظ بالفعل.
+      if (!commentSaved && uploadedImage?.path) {
         const { error: cleanupError } = await supabase.storage
           .from(storageBucket)
           .remove([uploadedImage.path]);
+
         if (cleanupError) {
-          console.error('Could not remove the unused comment image:', cleanupError);
+          console.error('Could not remove the unused comment image:', {
+            message: cleanupError.message,
+            details: cleanupError,
+          });
         }
       }
-      toast.error('تعذر حفظ التعليق. تحقق من الاتصال ثم حاول مرة أخرى.');
+
+      if (commentSaved) {
+        toast.warning(
+          'تم حفظ التعليق، لكن تعذر تحديث القائمة. أعد فتح التعليقات للتحقق.',
+        );
+        void loadComments();
+      } else if (error?.code === '42501') {
+        toast.error(
+          'رفضت صلاحيات قاعدة البيانات إضافة التعليق. تحقق من سياسة INSERT في Supabase.',
+        );
+      } else if (error?.code === '23503') {
+        toast.error(
+          'تعذر الحفظ لأن المنشور أو المستخدم أو التعليق الأصلي غير موجود في قاعدة البيانات.',
+        );
+      } else if (error?.code === '23502') {
+        toast.error(
+          'تعذر الحفظ: هناك حقل مطلوب مفقود في بيانات التعليق.',
+        );
+      } else if (error?.code === '42703' || error?.code === 'PGRST204') {
+        toast.error(
+          'تعذر الحفظ بسبب اختلاف أسماء أعمدة التعليقات عن مخطط قاعدة البيانات.',
+        );
+      } else {
+        toast.error(
+          `تعذر حفظ التعليق${error?.message ? `: ${error.message}` : '. تحقق من الاتصال ثم حاول مرة أخرى.'}`,
+        );
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
-  const runReaction = async (commentId: string, update: () => Promise<void>) => {
+  const runReaction = async (
+    commentId: string,
+    update: () => Promise<void>,
+  ) => {
     if (pendingReactionIds[commentId]) return;
-    setPendingReactionIds((prev) => ({ ...prev, [commentId]: true }));
+
+    setPendingReactionIds((prev) => ({
+      ...prev,
+      [commentId]: true,
+    }));
+
     try {
       await update();
       await loadComments();
@@ -302,7 +457,11 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
       return;
     }
 
-    setPendingDeleteIds((prev) => ({ ...prev, [comment.id]: true }));
+    setPendingDeleteIds((prev) => ({
+      ...prev,
+      [comment.id]: true,
+    }));
+
     try {
       const { data, error } = await supabase
         .from('comments')
@@ -311,11 +470,14 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
         .eq('user_id', currentUserId)
         .select('id')
         .maybeSingle();
+
       if (error) throw error;
+
       if (!data?.id) {
         toast.error('لم يُحذف التعليق؛ تحقق من صلاحيات الحساب');
         return;
       }
+
       toast.success('تم حذف التعليق');
       await loadComments();
     } catch (error) {
@@ -333,7 +495,11 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   const handleComposerKeyDown = (
     event: React.KeyboardEvent<HTMLTextAreaElement>,
   ) => {
-    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (
+      event.key === 'Enter' &&
+      !event.shiftKey &&
+      !event.nativeEvent.isComposing
+    ) {
       event.preventDefault();
       void handleSubmit();
     }
@@ -342,13 +508,18 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 backdrop-blur-sm" dir="rtl">
+    <div
+      className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 backdrop-blur-sm"
+      dir="rtl"
+    >
       <div className="absolute inset-0" onClick={onClose} />
 
       <section
         aria-label="التعليقات"
         className="relative z-10 flex w-full max-w-2xl flex-col rounded-t-[28px] border border-b-0 border-zinc-800 bg-zinc-950 text-white shadow-2xl sm:rounded-t-3xl"
-        style={{ height: 'min(88dvh, calc(100dvh - env(safe-area-inset-top)))' }}
+        style={{
+          height: 'min(88dvh, calc(100dvh - env(safe-area-inset-top)))',
+        }}
       >
         <header className="flex shrink-0 items-center justify-between border-b border-zinc-800/80 px-4 py-3">
           <button
@@ -362,7 +533,7 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
 
           <div className="flex items-center gap-2" aria-live="polite">
             <MessageCircle size={18} className="text-pink-500" />
-            <span className="font-bold text-base text-zinc-100">
+            <span className="text-base font-bold text-zinc-100">
               التعليقات · {formatCounter(totalComments)}
             </span>
           </div>
@@ -372,7 +543,10 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
 
         <div className="flex-1 space-y-0 overflow-y-auto overscroll-contain px-4 py-1">
           {commentsError && (
-            <div className="my-3 flex items-center justify-between gap-3 rounded-xl border border-red-900/70 bg-red-950/40 px-3 py-2 text-sm text-red-200" role="alert">
+            <div
+              className="my-3 flex items-center justify-between gap-3 rounded-xl border border-red-900/70 bg-red-950/40 px-3 py-2 text-sm text-red-200"
+              role="alert"
+            >
               <span>{commentsError}</span>
               <button
                 type="button"
@@ -385,13 +559,18 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
           )}
 
           {loading && comments.length === 0 && !commentsError ? (
-            <div className="flex h-40 items-center justify-center text-sm text-zinc-500" role="status">
+            <div
+              className="flex h-40 items-center justify-center text-sm text-zinc-500"
+              role="status"
+            >
               جاري تحميل التعليقات...
             </div>
           ) : !loading && !commentsError && comments.length === 0 ? (
             <div className="flex h-40 flex-col items-center justify-center gap-2 text-center text-zinc-500">
               <MessageCircle size={32} className="text-zinc-700" />
-              <p className="text-sm">لا توجد تعليقات بعد... كن أول من يعلق!</p>
+              <p className="text-sm">
+                لا توجد تعليقات بعد... كن أول من يعلق!
+              </p>
             </div>
           ) : comments.length > 0 ? (
             comments.map((comment) => (
@@ -416,17 +595,23 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
 
         <footer
           className="shrink-0 space-y-2 border-t border-zinc-800/90 bg-zinc-950 px-3 pt-3 sm:px-4"
-          style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+          style={{
+            paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))',
+          }}
         >
           {replyingTo && (
             <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-300">
               <span>
-                الرد على <strong className="text-pink-400">@{replyingTo.profiles?.username || 'مستخدم'}</strong>
+                الرد على{' '}
+                <strong className="text-pink-400">
+                  @{replyingTo.profiles?.username || 'مستخدم'}
+                </strong>
               </span>
               <button
                 type="button"
                 onClick={() => setReplyingTo(null)}
                 className="text-zinc-400 hover:text-white"
+                aria-label="إلغاء الرد"
               >
                 <X size={14} />
               </button>
@@ -435,7 +620,11 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
 
           {previewUrl && (
             <div className="relative mr-1 inline-block h-16 w-16 overflow-hidden rounded-xl border border-zinc-700">
-              <img src={previewUrl} alt="معاينة الصورة المرفقة" className="h-full w-full object-cover" />
+              <img
+                src={previewUrl}
+                alt="معاينة الصورة المرفقة"
+                className="h-full w-full object-cover"
+              />
               <button
                 type="button"
                 onClick={() => setSelectedImage(null)}
@@ -475,17 +664,19 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
                   role="group"
                   aria-label="اختيار ملصق"
                 >
-                  {['❤️', '🥰', '😂', '👏', '🙏', '✨', '🌷', '🤍', '🫶', '🎉'].map((sticker) => (
-                    <button
-                      key={sticker}
-                      type="button"
-                      onClick={() => insertSticker(sticker)}
-                      className="flex h-9 w-9 items-center justify-center rounded-lg text-xl hover:bg-zinc-800"
-                      aria-label={`إضافة ${sticker}`}
-                    >
-                      {sticker}
-                    </button>
-                  ))}
+                  {['❤️', '🥰', '😂', '👏', '🙏', '✨', '🌷', '🤍', '🫶', '🎉'].map(
+                    (sticker) => (
+                      <button
+                        key={sticker}
+                        type="button"
+                        onClick={() => insertSticker(sticker)}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg text-xl hover:bg-zinc-800"
+                        aria-label={`إضافة ${sticker}`}
+                      >
+                        {sticker}
+                      </button>
+                    ),
+                  )}
                 </div>
               )}
 
@@ -493,7 +684,7 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
                 ref={textareaRef}
                 rows={1}
                 value={content}
-                onChange={(e) => setContent(e.target.value)}
+                onChange={(event) => setContent(event.target.value)}
                 onKeyDown={handleComposerKeyDown}
                 placeholder={replyingTo ? 'اكتب رداً...' : 'إضافة تعليق...'}
                 maxLength={2000}
@@ -555,11 +746,14 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
               onChange={(event) => {
                 const file = event.currentTarget.files?.[0] ?? null;
                 event.currentTarget.value = '';
+
                 if (!file) return;
+
                 if (file.size > 10 * 1024 * 1024) {
                   toast.error('حجم الصورة يجب ألا يتجاوز 10 ميغابايت');
                   return;
                 }
+
                 setSelectedImage(file);
               }}
             />
